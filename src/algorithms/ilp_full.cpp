@@ -22,7 +22,7 @@
  * THE SOFTWARE.
  */
 
-#include "algorithms/ilp_common.hpp"
+#include "algorithms/ilp_common_gurobi.hpp"
 #include "formatting.hpp"
 #include "generator.hpp"
 #include "routeplanner.hpp"
@@ -101,7 +101,7 @@ void make_rtvgraph(void* rtv_data)
         initial_pairing.insert(v->pending_requests.begin(), v->pending_requests.end());
         mtx.lock();
         if (initial_pairing.size() > (*vr_edges)[v].size())
-            cout << "Added " << initial_pairing.size() - (*vr_edges)[v].size() << " reqs" << endl;
+            cout << "Added " << initial_pairing.size() - (*vr_edges)[v].size() << " reqs to vid" << v->id << endl;
         mtx.unlock();
         for (auto r : initial_pairing)
         {
@@ -232,6 +232,31 @@ void make_rtvgraph(void* rtv_data)
                     pair<int,vector<NodeStop>> path = routeplanner::time_travel(
                             *v, request_vector, STANDARD, *network, time, start_time);
                     if (path.first < 0)
+                        continue;
+
+                    Request* new_request;
+                    for (auto & r: right){
+                        if (left.count(r)) 
+                        {
+                            new_request = r;
+                            break;
+                        }
+                    }
+                    // if (path.first == 0) {
+                    // }
+                    // string reqs = "";
+                    // for (auto r: requests) {
+                    //     reqs = reqs + to_string(r->id) + "\t";
+                    // }
+                    // string paths = "";
+                    // for (auto & node: path.second) {
+                    //     paths = paths + to_string(node.r->id) + "\t";
+                    // }
+                    // cout << "Got cost: " << path.first << "\t Vid: " << v->id << "\t Requests: " << reqs << "Path: " << paths <<endl;
+                    // cout << first << "\t" << round[k-1].size() << endl;
+                    // cout << new_request->id << endl;
+                    int seperate_cost = round[k-1][first].cost + new_request->ideal_traveltime;
+                    if (path.first > MAX_ADD_COST*(seperate_cost))
                         continue;
                     
                     // Accepted!  Save this new trip!
@@ -402,6 +427,15 @@ void make_rrgraph(void* rr_data)
         {
             if (*r1 == *r2)  // Don't pair with itself!
                 continue;
+            // avoid pairing different multi-modal combination of the same request
+            if (r1->original_req_id != -1 && r2->original_req_id != -1) {
+                if (r1->original_req_id == r2->original_req_id && r1->bus_trip_id != r2->bus_trip_id)
+                    continue;
+            }
+            // avoid pairing a first/last leg and the direct option of the same request
+            if (r2->id == r1->original_req_id && r1->id == r2->original_req_id) {
+                continue;
+            }
             vector<Request*> request_list { r1 , r2 };
             
             // Heuristic to prune the requests without calling the travel function.
@@ -415,7 +449,8 @@ void make_rrgraph(void* rr_data)
 
             pair<int,vector<NodeStop>> raw_path = routeplanner::travel(dummyVehicle, request_list, STANDARD,
                     *network, time);
-            if (raw_path.first >= 0) // I.e., valid trip.
+            double direct_travel_cost = r1->ideal_traveltime + r2->ideal_traveltime;
+            if (raw_path.first >= 0 && raw_path.first <= MAX_ADD_COST*direct_travel_cost) // I.e., valid trip.
                 compatible_requests.push_back(r2);
         }
         
@@ -550,7 +585,7 @@ std::map<Vehicle*, Trip> assignment(
         }
     }
 
-    return ilp_common::ilp_assignment(trip_list, requests, time);
+    return ilp_common_gurobi::ilp_assignment_gurobi(trip_list, requests, time);
 }
 
 }

@@ -61,9 +61,12 @@ int main(int argc, char *argv[])
         results << "VEHICLE_LIMIT " << VEHICLE_LIMIT << endl;
         results << "MAX_WAITING " << MAX_WAITING << endl;
         results << "MAX_DETOUR " << MAX_DETOUR << endl;
+        results << "MAX_ADD_COST " << MAX_ADD_COST << endl;
         results << "REQUEST_DATA_FILE " << REQUEST_DATA_FILE << endl;
         results << "VEHICLE_DATA_FILE " << VEHICLE_DATA_FILE << endl;
         results << "CARSIZE " << CARSIZE << endl;
+        results << "GRB_TIME_LIMIT " << GRB_TIME_LIMIT << endl;
+        results << "ALLOW_MULTI_MODAL " << ALLOW_MULTI_MODAL << endl;
         results << "INITIAL_TIME " << INITIAL_TIME << endl;
         results << "FINAL_TIME " << FINAL_TIME << endl;
         results << "ALGORITHM ";
@@ -120,7 +123,10 @@ int main(int argc, char *argv[])
     // Load all the vehicles and requests for the simulation.
     info("Loading vehicles and requests...", White);
     vector<Vehicle> vehicles = csvreader::load_vehicles();
-    vector<Request> requests = csvreader::load_requests(network);
+    vector<Request> requests = csvreader::load_requests(network, false);
+    vector<Request> leg_requests;
+    if (ALLOW_MULTI_MODAL)
+        leg_requests = csvreader::load_requests(network, true);
     vector<Request *> active_requests; // Holds requests across iterations.
     info("Vehicles and requests were loaded!", Purple);
 
@@ -138,16 +144,20 @@ int main(int argc, char *argv[])
     int storage_request_count = 0;
     double duration;
     double max_assignment_time = 0;
+    int direct_served_requests = 0;
+    map<int, set<int>> legs_served;
     chrono::time_point<chrono::high_resolution_clock>
-        clock_start, clock_stop, clock_iteration_start, clock_iteration_stop;
+        clock_start, clock_stop, clock_iteration_start, clock_iteration_stop, clock_simulation_start, clock_simulation_stop;
 
     { // Add header to the top of the ilp log file.
         ofstream ilpfile(RESULTS_DIRECTORY + "/ilp.csv", std::ios_base::app);
         ilpfile << "Time\tObj\tSolverTime\tAbsGap\tRelGap\tNumAssigned\tStatus" << endl;
     }
 
+
     info("Done with all set up!", Purple);
     info("Starting iterations!", Cyan);
+    clock_simulation_start = std::chrono::high_resolution_clock::now();
     int time = decode_time(INITIAL_TIME) - INTERVAL;
     while(time < decode_time(FINAL_TIME) - INTERVAL)  // Each loop is a simulation of a time step.
     {
@@ -161,12 +171,15 @@ int main(int argc, char *argv[])
         // Get the set of active vehicles and new requests for this iteration.
         info("Running buffer update", Yellow);
         vector<Vehicle*> active_vehicles = buffer::get_active_vehicles(vehicles, time);
-        vector<Request*> new_requests = buffer::get_new_requests(requests, time);
-        stats_entry_count += new_requests.size();
+        vector<Request*> new_requests = buffer::get_new_requests(requests, leg_requests, time);
 
         // Adding new requests.
         for (auto r : new_requests)
+        {
+            if (r->original_req_id == -1)
+                stats_entry_count++;
             active_requests.push_back(r);
+        }
 
         clock_stop = std::chrono::high_resolution_clock::now();
         duration = 0.000001 * duration_cast<microseconds>(clock_stop - clock_start).count();
@@ -185,6 +198,19 @@ int main(int argc, char *argv[])
                 blank_trips.insert(&v);
         for (auto v : blank_trips)
             assigned_trips.erase(v);
+
+        // recording assignments
+        {
+            ofstream assignment_file(RESULTS_DIRECTORY + "/assignment.log", std::ios_base::app);
+            assignment_file << "TIME STAMP:" << encode_time(time) << endl;
+            for (auto &t : assigned_trips) {
+                assignment_file << "\tAssigned vid " << t.first->id << "\t";
+                for (auto r : t.second.requests) {
+                    assignment_file << r->id << "\t";
+                }
+                assignment_file << endl;
+            }
+        }
         
         vector<Request *> assigned_requests;
         for (auto &t : assigned_trips)
@@ -238,6 +264,12 @@ int main(int argc, char *argv[])
                 stats_total_waiting_time += r->boarding_time - r->entry_time;
                 stats_pickup_count++;
                 service_count++;
+                int original_req_id = r->original_req_id;
+                if (original_req_id == -1) {
+                    direct_served_requests ++;
+                } else {
+                    legs_served[original_req_id].insert(r->id);
+                }
             }
             for (auto r : vehicle.just_alighted)
             {   
@@ -264,7 +296,7 @@ int main(int argc, char *argv[])
             // Update statistics.
 
             // Service Rate
-            double service_rate = 100 * stats_pickup_count / double(stats_entry_count);
+            double service_rate = 100 * (direct_served_requests + legs_served.size()) / double(stats_entry_count);
             results_file << "\tService Rate\t" << service_rate << "\t%" << endl;
             info("Service rate is " + to_string(service_rate) + ".", Red);
 
@@ -332,11 +364,13 @@ int main(int argc, char *argv[])
         info("Done with iteration", Green);
     } /* End of iteration loop. */
 
+    clock_simulation_stop = std::chrono::high_resolution_clock::now();
     // Final statistics for the final summary!
     {
         ofstream results_file(RESULTS_DIRECTORY + "/results.log", std::ios_base::app);
         results_file << "FINAL SUMMARY" << endl;
 
+        results_file << "\tstats_pickup_count\t" << stats_pickup_count << endl;
         int final_count = stats_pickup_count;
         int errors = 0;
 
@@ -347,9 +381,47 @@ int main(int argc, char *argv[])
                 else
                     final_count++;
 
-        double service_rate = 100 * final_count / double(stats_entry_count);
+        double service_rate = 100 * (direct_served_requests + legs_served.size()) / double(stats_entry_count);
+        double mm_rate = 100 * legs_served.size() / double(stats_entry_count);
+        int first_leg_trips = 0;
+        int last_leg_trips = 0;
+        for (auto const& x : legs_served) {
+
+            // results_file << "\tLegs served\t" << x.first << "\t%";
+            // for(auto f : x.second) {
+            //     results_file << f << "\t";
+            // } 
+            // results_file << endl;
+            
+            if (x.second.size() != 1)
+                continue;
+            for (auto & r : leg_requests)
+            {
+                if (x.second.count(r.id)) // If already entered, but not too long ago.
+                {
+                    if (r.leg_type == 0){
+                        first_leg_trips++;
+                    } else {
+                        last_leg_trips++;
+                    }
+                    break;
+                }
+            }
+        }
+
+        double compute_time = 0.000001 * duration_cast<microseconds>(
+                clock_simulation_stop - clock_simulation_start).count();
+        results_file << "\tCompute Time\t" << compute_time << endl;
+        double first_leg_trips_rate = 100 * first_leg_trips / double(stats_entry_count);
+        double last_leg_trips_rate = 100 * last_leg_trips / double(stats_entry_count);
         results_file << "\tService Rate\t" << service_rate << "\t%" << endl;
+        results_file << "\tOn-demand rate\t" << (service_rate - mm_rate) << "\t%" << endl;
+        results_file << "\tMulti-modal rate\t" << mm_rate << "\t%" << endl;
+        results_file << "\tFirst-leg rate\t" << first_leg_trips_rate << "\t%" << endl;
+        results_file << "\tLast-leg rate\t" << last_leg_trips_rate << "\t%" << endl;
+        results_file << "\tBoth-leg rate\t" << (mm_rate - first_leg_trips_rate - last_leg_trips_rate) << "\t%" << endl;
         results_file << "\tServed\t" << final_count << endl;
+        results_file << "\tServed\t" << direct_served_requests + legs_served.size() << endl;
         results_file << "\tError Count\t" << errors << endl;
 
         int passenger_time = stats_total_in_vehicle_time;

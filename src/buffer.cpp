@@ -40,13 +40,20 @@ vector<Vehicle*> buffer::get_active_vehicles(vector<Vehicle> & vehicles, int tim
     return buffer;
 }
 
-vector<Request*> buffer::get_new_requests(vector<Request> & requests, int time)
+vector<Request*> buffer::get_new_requests(vector<Request> & requests, vector<Request> & leg_requests, int time)
 {
     vector<Request*> buffer;
 
     for (auto & r : requests)
+    {
         if (r.entry_time <= time && time < r.entry_time + INTERVAL) // If already entered, but not too long ago.
+        {
             buffer.push_back(&r);
+            for (auto & l_r : leg_requests)
+                if (l_r.original_req_id == r.id) // If already entered, but not too long ago.
+                    buffer.push_back(&l_r);
+        }
+    }
 
     return buffer;
 }

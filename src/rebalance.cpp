@@ -24,14 +24,17 @@
 
 #include "rebalance.hpp"
 #include "routeplanner.hpp"
+#include "settings.hpp"
 
-#include "fusion.h"             // For MOSEK functions.
+#include "gurobi_c++.h"            // For gurobi functions.
 #include <set>
+#include <sstream>
 
-using namespace mosek::fusion;  // For MOSEK functions.
-using namespace monty;          // For MOSEK functions.
+// using namespace mosek::fusion;  // For MOSEK functions.
+// using namespace monty;          // For MOSEK functions.
 using namespace std;
 
+// string itos(int i) {stringstream s; s << i; return s.str(); }
 namespace rebalance
 {
 
@@ -42,53 +45,112 @@ map<Vehicle*,Trip> rebalance_matching_lp(
         return map<Vehicle*,Trip>();
     
     int R = requests.size(), V = trips_map.size();
+    int var_count = R*V;
     int match_count = min(R, V);
     
     cout <<  "R = " << R << ", V = " << V << endl;
-    
-    // This is how Mosek says to create a model.
-    Model::t M = new Model("rebalanceR"); auto _M = finally([&]() { M->dispose(); });
-    Variable::t x = M->variable("x", new_array_ptr<int, 1>({V, R}), Domain::binary());
-    
-    // Constraint one : make correct number of matches.
-    M->constraint("c1", Expr::sum(x), Domain::equalsTo(double(match_count)));
-    
-    // Constraints two and three : choose each vehicle and request at most once.
-    M->constraint("c2", Expr::sum(x, 0), Domain::lessThan(1.0));
-    M->constraint("c3", Expr::sum(x, 1), Domain::lessThan(1.0));
-    
+
+     // Creating an environment
+    GRBEnv env = GRBEnv(true);
+    env.set("LogFile", RESULTS_DIRECTORY + "/rebalance_mip.log");
+    env.start();
+
+    // Create an empty model
+    GRBModel model = GRBModel(env);
+
+    GRBVar* x = new GRBVar[var_count];
     // Objective function.
-    auto costs = make_shared<ndarray<double, 2>>(shape(V, R));
+    int v = 0;
+    for (auto &vehicle_to_trips : trips_map)
     {
-        int v = 0;
-        for (auto &vehicle_to_trips : trips_map)
+        vector<Trip> trips_list = vehicle_to_trips.second;
+        int r = 0;
+        for (auto &trip : trips_list)
         {
-            vector<Trip> trips_list = vehicle_to_trips.second;
-            int r = 0;
-            for (auto &trip : trips_list)
-            {
-                (*costs)[v * R + r] = trip.cost;
-                r ++;
-            }
-            v ++;
+            x[v * R + r] = model.addVar(0.0, 1.0, trip.cost, GRB_BINARY, "x_"+to_string(v * R + r));
+            r ++;
         }
+        v ++;
+    }
+
+    // Constraint one : make correct number of matches.
+    GRBLinExpr expr1 = 0;
+    for (auto i = 0; i < var_count; i++)
+    {
+        expr1 += x[i];
+    }
+    model.addConstr(expr1 == match_count, "Sum of assignments");
+
+    // Constraints two : choose each vehicle at most once.
+    for (auto v = 0; v < V; v++)
+    {
+        string name = "c2-" + to_string(v);
+        GRBLinExpr expr = 0;
+        for (auto r = 0; r < R; r++)
+        {
+            expr += x[v*R+r];
+        }
+        model.addConstr(expr <= 1, name);
+    }
+
+    // Constraints Three : choose each request at most once.
+    for (auto r = 0; r < R; r++)
+    {
+        string name = "c3-" + to_string(r);
+        GRBLinExpr expr = 0;
+        for (auto v = 0; v < V; v++)
+        {
+            expr += x[v*R+r];
+        }
+        model.addConstr(expr <= 1, name);
     }
     
-    M->objective("obj", ObjectiveSense::Minimize, Expr::dot(costs, x));
+    // Variable::t x = M->variable("x", new_array_ptr<int, 1>({V, R}), Domain::binary());
+    
+    // Constraint one : make correct number of matches.
+    // M->constraint("c1", Expr::sum(x), Domain::equalsTo(double(match_count)));
+    
+    // Constraints two and three : choose each vehicle and request at most once.
+    // M->constraint("c2", Expr::sum(x, 0), Domain::lessThan(1.0));
+    // M->constraint("c3", Expr::sum(x, 1), Domain::lessThan(1.0));
+    
+    // Objective function.
+    // auto costs = make_shared<ndarray<double, 2>>(shape(V, R));
+    // {
+    //     int v = 0;
+    //     for (auto &vehicle_to_trips : trips_map)
+    //     {
+    //         vector<Trip> trips_list = vehicle_to_trips.second;
+    //         int r = 0;
+    //         for (auto &trip : trips_list)
+    //         {
+    //             (*costs)[v * R + r] = trip.cost;
+    //             r ++;
+    //         }
+    //         v ++;
+    //     }
+    // }
+    
+    // M->objective("obj", ObjectiveSense::Minimize, Expr::dot(costs, x));
     
     // Set maximum solution time, relative gap, and absolute gap paramters.
-    M->setSolverParam("mioMaxTime", 20);
-    M->setSolverParam("mioTolRelGap", 1e-1);  // 1e-4 is default value.
-    M->setSolverParam("mioTolAbsGap", 0.0);   // 0.0  is default value.
+    // M->setSolverParam("mioMaxTime", 20);
+    // M->setSolverParam("mioTolRelGap", 1e-1);  // 1e-4 is default value.
+    // M->setSolverParam("mioTolAbsGap", 0.0);   // 0.0  is default value.
     
     // Solve.
-    M->solve();
+    // M->solve();
+    // Solve.
+    model.set(GRB_DoubleParam_TimeLimit, 20.0);
+    model.optimize();
     
-    auto solution = x->level();
+    // auto solution = x->level();
     vector<int> decision(R * V);
     for (int v = 0; v < V; v ++)
-        for (int r = 0; r < R; r ++)
-            decision[v * R + r] = (*solution)[v * R + r] > 0.5;
+        for (int r = 0; r < R; r ++) {
+            double d = x[v * R + r].get(GRB_DoubleAttr_X);
+            decision[v * R + r] = d > 0.5;
+        }
     
     map<Vehicle*,Trip> rebalancing_trips;
     

@@ -31,11 +31,15 @@ extern int FINAL_TIME;
 extern int INITIAL_TIME;
 extern int INTERVAL;
 extern bool LAST_MINUTE_SERVICE;                // Feature does not work with dwell times.
-extern int MAX_DETOUR;
+extern bool ALLOW_MULTI_MODAL;
+extern double MAX_DETOUR;
+extern double MAX_ADD_COST;
 extern int MAX_WAITING;
 extern std::string REQUEST_DATA_FILE;
+extern std::string LEG_REQUEST_DATA_FILE;
 extern std::string RESULTS_DIRECTORY;
 extern int RTV_TIMELIMIT;
+extern int GRB_TIME_LIMIT;
 extern std::string TIMEFILE;
 extern std::string VEHICLE_DATA_FILE;
 extern int VEHICLE_LIMIT;

@@ -99,8 +99,8 @@ Network::Network()
         {
             vector<string> fields;
             split(fields, line, is_any_of(","));
-            int origin = stoi(fields[0]) - 1;
-            int dest = stoi(fields[1]) - 1;
+            int origin = stoi(fields[0]) - 2;
+            int dest = stoi(fields[1]) - 2;
             int length = stoi(fields[2]);
             
             if (adjacency_list.size() < origin + 1)

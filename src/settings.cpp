@@ -48,11 +48,15 @@ int FINAL_TIME = 240000;
 int INITIAL_TIME = 0;       // Time in HHMMSS
 int INTERVAL = 60;
 bool LAST_MINUTE_SERVICE;
-int MAX_DETOUR = 600;
+bool ALLOW_MULTI_MODAL = false;
+double MAX_DETOUR = 600;
+double MAX_ADD_COST = 1.2;
 int MAX_WAITING = 300;
 string REQUEST_DATA_FILE = "requests.csv";
+string LEG_REQUEST_DATA_FILE = "leg_requests.csv";
 string RESULTS_DIRECTORY = "results";
 int RTV_TIMELIMIT = 0;
+int GRB_TIME_LIMIT = 90;
 string TIMEFILE = "times.csv";
 string VEHICLE_DATA_FILE = "vehicles.csv";
 int VEHICLE_LIMIT = 1000; // 0;
@@ -100,7 +104,9 @@ void initialize(int argc, char** argv)
         else if (key == "MAX_WAITING")
             MAX_WAITING = stoi(value);
         else if (key == "MAX_DETOUR")
-            MAX_DETOUR = stoi(value);
+            MAX_DETOUR = stod(value);
+        else if (key == "MAX_ADD_COST")
+            MAX_ADD_COST = stod(value);
         else if (key == "REQUEST_DATA_FILE")
             REQUEST_DATA_FILE = process_string(value);
         else if (key == "VEHICLE_DATA_FILE")
@@ -146,10 +152,25 @@ void initialize(int argc, char** argv)
                 throw runtime_error("Argument could not be converted into a boolean.");
             }
         }
+        else if (key == "ALLOW_MULTI_MODAL")
+        {
+            string s = boost::algorithm::to_lower_copy(value);
+            if (s == "true")
+                ALLOW_MULTI_MODAL = true;
+            else if (s == "false")
+                ALLOW_MULTI_MODAL = false;
+            else
+            {
+                cout << "For " << key << " trying to interpret \"" << value << "\"." << endl;
+                throw runtime_error("Argument could not be converted into a boolean.");
+            }
+        }
         else if (key == "INTERVAL")
             INTERVAL = stoi(value);
         else if (key == "RTV_TIMELIMIT")
             RTV_TIMELIMIT = stoi(value);
+        else if (key == "GRB_TIME_LIMIT")
+            GRB_TIME_LIMIT = stoi(value);
         else if (key == "DWELL_PICKUP")
             DWELL_PICKUP = stoi(value);
         else if (key == "DWELL_ALIGHT")

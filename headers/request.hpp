@@ -51,6 +51,11 @@ struct Request
     int latest_alighting;
     bool shared;
     bool assigned;
+
+    int original_req_id;
+    int bus_trip_id;
+    int leg_type;
+    std::string bus_line_info;
     
     double origin_longitude;
     double origin_latitude;

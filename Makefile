@@ -6,12 +6,13 @@ CXXFLAGS := -std=c++11 -g
 # These are the locations to look for headers called from the .cpp files 
 # Works only on linux and MacOS for now. TODO: Add windows support.
 ifeq (${UNAME_S},Linux)
-	INCLUDE := -Iheaders -I${MSKHOME}/mosek/8/tools/platform/linux64x86/h -Ithreadpool
+	INCLUDE := -Iheaders -I${MSKHOME}/mosek/8/tools/platform/linux64x86/h -I${GUROBI_HOME}/include/ -Ithreadpool
 endif
 ifeq (${UNAME_S},Darwin)
 	INCLUDE := -Iheaders -I${MSKHOME}/mosek/8/tools/platform/osx64x86/h -Ithreadpool
 endif
 
+# INCLUDE := -Iheaders -I${GUROBI_HOME}/linux64/include/ -Ithreadpool
 
 # These are the locations and list of libraries to link to the binary.
 # Works only for linux and MacOS for now. TODO: Add windows support.
@@ -24,6 +25,9 @@ ifeq (${UNAME_S},Darwin)
 	LDFLAGS := -L${MSKHOME}/mosek/8/tools/platform/osx64x86/bin \
 			-pthread -lfusion64 -lmosek64 
 endif
+
+LDFLAGSG := -L${GUROBI_HOME}/lib \
+		-lgurobi_c++ -lgurobi110 -lm
 
 # Define the location of dependencies folder, flags for CXX to output dependencies.
 # See http://make.mad-scientist.net/papers/advanced-auto-dependency-generation/
@@ -39,7 +43,7 @@ DEPFILES := $(SRC:%.cpp=$(DEPDIR)/%.d)
 
 # The first, and default, target is the program which depends on object files and the threadpool.
 prog: $(OBJ) threadpool/libthpool.a
-	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS) $(LDFLAGSG)
 
 # Object files depend on the .cpp file and .d file, and the .dep directory which should exist first.
 build/%.o: %.cpp $(DEPDIR)/%.d | $(DEPDIR)

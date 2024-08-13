@@ -72,22 +72,29 @@ struct MnsSort
     }
 };
 
-pair<int,vector<NodeStop>> format_path(pair<int,vector<NodeStop*>> const & reverse_path, int time)
+pair<int,vector<NodeStop>> format_path(int start_node, Network const & network, pair<int,vector<NodeStop*>> const & reverse_path, int time)
 {
     int cost = reverse_path.first;
-    if (CTSP_OBJECTIVE == CTSP_VMT && cost >= 0) // Use this with VMT objective only.
-        cost -= time;
     vector<NodeStop> ordered_rs;
     for (auto i = reverse_path.second.size(); i--;)
         ordered_rs.push_back(*reverse_path.second[i]);
     
+    if (CTSP_OBJECTIVE == CTSP_VMT && cost >= 0) // Use this with VMT objective only.
+    {
+        cost = 0;
+        int prev_node = start_node;
+        for (auto & node : ordered_rs) {
+            cost += network.get_time(prev_node, node.node);
+            prev_node = node.node;
+        }
+    }
     // Format the response.
     return make_pair(cost, ordered_rs);
 }
 
 int get_alight_deadline(Request const * r)
 {
-    return r->entry_time + r->ideal_traveltime + MAX_DETOUR;
+    return r->latest_alighting;
 }
 
 enum Action {PICKUP, DROPOFF, NO_ACTION};
@@ -139,7 +146,7 @@ pair<int,vector<NodeStop*>> recursive_search(int initial_location, int residual_
             continue;
         
         // Assert this is in the acceptable time range.
-        if (m->node->is_pickup && arrival_time > m->node->r->entry_time + MAX_WAITING)
+        if (m->node->is_pickup && arrival_time > m->node->r->latest_boarding)
             continue;
         if (get_alight_deadline(m->node->r) < arrival_time)
             continue;
@@ -302,7 +309,7 @@ pair<int,vector<NodeStop>> new_travel(Vehicle const & v, vector<Request*> const 
     else
         throw runtime_error("No valid CTSP objective selected.");
     
-    return format_path(optimal, time);
+    return format_path(start_node, network, optimal, time);
 }
 
 pair<int,vector<NodeStop>> memory(Vehicle const & v, Network const & network, int time)
@@ -331,7 +338,7 @@ pair<int,vector<NodeStop>> memory(Vehicle const & v, Network const & network, in
             initially_available, network, call_time, -1);
     else
         throw runtime_error("No valid CTSP objective selected.");
-    return format_path(optimal, time);
+    return format_path(start_node, network, optimal, time);
 }
 
 // The implementation of Travel() function
@@ -411,7 +418,7 @@ pair<int,vector<NodeStop*>> recursive_search_timed(int initial_location, int res
             continue;
         
         // Assert this is in the acceptable time range.
-        if (m->node->is_pickup && arrival_time > m->node->r->entry_time + MAX_WAITING)
+        if (m->node->is_pickup && arrival_time > m->node->r->latest_boarding)
             continue;
         if (get_alight_deadline(m->node->r) < arrival_time)
             continue;
@@ -561,7 +568,7 @@ pair<int,vector<NodeStop>> new_time_travel(Vehicle const & v, vector<Request*> c
     else
         throw runtime_error("No valid CTSP objective selected for timed feature.");
     
-    return format_path(optimal, time);
+    return format_path(start_node, network, optimal, time);
 }
 
 

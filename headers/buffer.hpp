@@ -33,7 +33,7 @@
 namespace buffer
 {
 std::vector<Vehicle*> get_active_vehicles(std::vector<Vehicle> & vehicles, int time);
-std::vector<Request*> get_new_requests(std::vector<Request> & requests, int time);
+std::vector<Request*> get_new_requests(std::vector<Request> & requests, std::vector<Request> & leg_requests, int time);
 };
 
 #endif /* BUFFER_HPP */

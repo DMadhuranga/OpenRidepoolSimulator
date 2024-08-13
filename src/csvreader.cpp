@@ -84,15 +84,21 @@ vector<Vehicle> csvreader::load_vehicles()
     return vehicles;
 }
 
-vector<Request> csvreader::load_requests(Network const & network)
+vector<Request> csvreader::load_requests(Network const & network, bool first_last_legs)
 {
     vector<Request> requests;
-    ifstream rfile(DATAROOT + "/requests/" + REQUEST_DATA_FILE);
+    string file_name;
+    if (first_last_legs) {
+        file_name = LEG_REQUEST_DATA_FILE;
+    } else {
+        file_name = REQUEST_DATA_FILE;
+    }
+    ifstream rfile(DATAROOT + "/requests/" + file_name);
     if (!rfile.is_open())
     {
         cout << "ERROR: Unable to open requests file." << endl;
         cout << "\tSearching for requests file at:" << endl;
-        cout << "\t\t" << DATAROOT + "/requests/" + REQUEST_DATA_FILE << endl;
+        cout << "\t\t" << DATAROOT + "/requests/" + file_name << endl;
         throw runtime_error("Requests file not found!");
     }
 
@@ -104,6 +110,11 @@ vector<Request> csvreader::load_requests(Network const & network)
     string requested_time_string;
     string origin_node;
     string destination_node;
+    string arrival_time_string;
+    string original_req_id_string;
+    string bus_trip_id_string;
+    string leg_type_string;
+    string bus_line_data_string;
     int i = 0;
     while (!rfile.eof())
     {
@@ -114,7 +125,16 @@ vector<Request> csvreader::load_requests(Network const & network)
         getline(rfile, destination_node, ',');
         getline(rfile, destination_longitude, ',');
         getline(rfile, destination_latitude, ',');
-        getline(rfile, requested_time_string, '\n');
+        if (first_last_legs) {
+            getline(rfile, requested_time_string, ',');
+            getline(rfile, arrival_time_string, ',');
+            getline(rfile, original_req_id_string, ',');
+            getline(rfile, bus_trip_id_string, ',');
+            getline(rfile, leg_type_string, ',');
+            getline(rfile, bus_line_data_string, '\n');
+        } else {
+            getline(rfile, requested_time_string, '\n');
+        }
         
         if (!request_id.size())  // Detect end of file.
             continue;
@@ -129,9 +149,19 @@ vector<Request> csvreader::load_requests(Network const & network)
         
         r.id = stoi(request_id);
         r.entry_time = read_time(requested_time_string);
-        r.latest_boarding = r.entry_time + MAX_WAITING;
-        r.latest_alighting = r.entry_time + MAX_DETOUR + network.get_time(r.origin, r.destination);
         r.ideal_traveltime = network.get_time(r.origin, r.destination);
+        if (first_last_legs) {
+            r.bus_line_info = bus_line_data_string;
+            r.leg_type = stoi(leg_type_string);
+            r.original_req_id = stoi(original_req_id_string);
+            r.bus_trip_id = stoi(bus_trip_id_string);
+            r.latest_alighting = read_time(arrival_time_string);
+            r.latest_boarding = r.latest_alighting - r.ideal_traveltime;
+        } else {
+            r.original_req_id = -1;
+            r.latest_boarding = r.entry_time + MAX_WAITING;
+            r.latest_alighting = r.entry_time + MAX_WAITING + MAX_DETOUR*network.get_time(r.origin, r.destination);
+        }
         
         requests.push_back(r);
     }

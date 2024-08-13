@@ -34,7 +34,7 @@
 namespace csvreader
 {
 std::vector<Vehicle> load_vehicles();
-std::vector<Request> load_requests(Network const & network);
+std::vector<Request> load_requests(Network const & network, bool first_last_legs);
 }
 
 #endif /* CSVREADER_HPP */

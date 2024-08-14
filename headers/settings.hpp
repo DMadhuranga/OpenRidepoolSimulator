@@ -39,7 +39,7 @@ extern std::string REQUEST_DATA_FILE;
 extern std::string LEG_REQUEST_DATA_FILE;
 extern std::string RESULTS_DIRECTORY;
 extern int RTV_TIMELIMIT;
-extern int GRB_TIME_LIMIT;
+extern double GRB_TIME_LIMIT;
 extern std::string TIMEFILE;
 extern std::string VEHICLE_DATA_FILE;
 extern int VEHICLE_LIMIT;

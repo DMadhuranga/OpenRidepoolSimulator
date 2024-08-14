@@ -6,28 +6,26 @@ CXXFLAGS := -std=c++11 -g
 # These are the locations to look for headers called from the .cpp files 
 # Works only on linux and MacOS for now. TODO: Add windows support.
 ifeq (${UNAME_S},Linux)
-	INCLUDE := -Iheaders -I${MSKHOME}/mosek/8/tools/platform/linux64x86/h -I${GUROBI_HOME}/include/ -Ithreadpool
+	INCLUDE := -Iheaders -I${GUROBI_HOME}/include/ -Ithreadpool
 endif
 ifeq (${UNAME_S},Darwin)
-	INCLUDE := -Iheaders -I${MSKHOME}/mosek/8/tools/platform/osx64x86/h -Ithreadpool
+	INCLUDE := -Iheaders -I${GUROBI_HOME}/ -Ithreadpool
 endif
 
-# INCLUDE := -Iheaders -I${GUROBI_HOME}/linux64/include/ -Ithreadpool
 
 # These are the locations and list of libraries to link to the binary.
 # Works only for linux and MacOS for now. TODO: Add windows support.
 ifeq (${UNAME_S},Linux)
-	LDFLAGS := -L${MSKHOME}/mosek/8/tools/platform/linux64x86/bin \
-                        -Wl,-rpath=${MSKHOME}/mosek/8/tools/platform/linux64x86/bin \
-                        -pthread -lfusion64 -lmosek64
+	LDFLAGS := -L${GUROBI_HOME}/lib \
+                        -lgurobi_c++ -lgurobi110 -lm
 endif
 ifeq (${UNAME_S},Darwin)
 	LDFLAGS := -L${MSKHOME}/mosek/8/tools/platform/osx64x86/bin \
 			-pthread -lfusion64 -lmosek64 
 endif
 
-LDFLAGSG := -L${GUROBI_HOME}/lib \
-		-lgurobi_c++ -lgurobi110 -lm
+# LDFLAGSG := -L${GUROBI_HOME}/lib \
+# 		-lgurobi_c++ -lgurobi110 -lm
 
 # Define the location of dependencies folder, flags for CXX to output dependencies.
 # See http://make.mad-scientist.net/papers/advanced-auto-dependency-generation/

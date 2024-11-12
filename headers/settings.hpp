@@ -8,7 +8,7 @@
 
 #define OPTIMIZER_VERBOSE true
 #define SIMULATOR_VERBOSE false
-#define PRUNING_RV_K 0 // 30 // 0 // 30        // Heuristic that only connects requests with nearest k vehicles.
+#define PRUNING_RV_K 30 // 30 // 0 // 30        // Heuristic that only connects requests with nearest k vehicles.
 #define PRUNING_RR_K 0 //10    // Heuristic that only connects requests with nearest k requests.
 
 enum Algorithm {ILP_FULL};
@@ -39,10 +39,14 @@ extern std::string REQUEST_DATA_FILE;
 extern std::string LEG_REQUEST_DATA_FILE;
 extern std::string RESULTS_DIRECTORY;
 extern int RTV_TIMELIMIT;
-extern double GRB_TIME_LIMIT;
+extern double GUROBI_TIME_LIMIT;
 extern std::string TIMEFILE;
 extern std::string VEHICLE_DATA_FILE;
 extern int VEHICLE_LIMIT;
+extern bool LINEAR_ASSIGNMENT;
+extern bool DISABLE_DIRECT_TRIPS;
+extern bool DISABLE_REASSIGNMENT;
+extern bool PRE_SOLVE_ILP;
 
 void initialize(int argc, char** argv);
 

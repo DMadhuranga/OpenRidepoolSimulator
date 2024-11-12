@@ -42,6 +42,7 @@ public:
     
     bool is_rebalancing;
     int rebalance_target;
+    int existing_cost;
     int get_capacity() const;
     int get_id() const;
     int get_start_time() const;

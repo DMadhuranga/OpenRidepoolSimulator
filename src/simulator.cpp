@@ -73,7 +73,7 @@ void move_jobless_vehicle(Vehicle & v, Network const & network, int time)
 
 
 /* For vehicles given new assignments. */
-void move_vehicle(Vehicle & vehicle, Trip const & trip, Network const & network, int time)
+void move_vehicle(Vehicle & vehicle, Trip const & trip, Network const & network, int time, bool ignore_trip_route)
 {
     vector<Request*> newRequests = trip.requests;
     set<Request*> pending_requests (newRequests.begin(), newRequests.end());
@@ -90,7 +90,7 @@ void move_vehicle(Vehicle & vehicle, Trip const & trip, Network const & network,
     
     int raw_cost;           // Cost of path.
     vector<NodeStop> path;
-    if (!trip.order_record.size())
+    if (!trip.order_record.size() || ignore_trip_route)
     {
         pair<int,vector<NodeStop>> travel_pair = routeplanner::travel(vehicle, 
                 newRequests, trigger, network, time);
@@ -108,6 +108,15 @@ void move_vehicle(Vehicle & vehicle, Trip const & trip, Network const & network,
 
     bool rebalancing = trip.is_fake;
     stringstream actions;
+
+    // for (NodeStop n : vehicle.order_record)
+    // {
+    //     actions << vehicle.id << ",order_record" << n.r->id << "," << n.is_pickup << "," << n.node << endl;
+    // }
+    // for (NodeStop n : path)
+    // {
+    //     actions << vehicle.id << ",path" << n.r->id << "," << n.is_pickup << "," << n.node << endl;
+    // }
     
     if (raw_cost == -1) // If the simulation crashes, be sure to dump the state to file.
     {
@@ -233,6 +242,23 @@ void move_vehicle(Vehicle & vehicle, Trip const & trip, Network const & network,
             interrupted = true;  // Since this must be interrupted by waiting time.
             break;
         }
+
+        if (is_pickup && r->entry_time > current_time)
+        {
+            int waiting_time = r->entry_time - current_time;
+            if (waiting_time >= traveltime_left)
+            {
+                actions << vehicle.id << "," << encode_time(current_time) <<
+                    "," << target_node << ",W" << endl;
+                interrupted = true;
+                break;
+            }
+            else
+            {
+                current_time += waiting_time;
+                traveltime_left -= waiting_time;
+            }
+        }
         
         // Now that we have arrived at the next destination, update the appropriate variables.
         jobs_completed++;
@@ -310,6 +336,10 @@ void move_vehicle(Vehicle & vehicle, Trip const & trip, Network const & network,
             vehicle.order_record.push_back(path[i]);
         
         vehicle.pending_requests = vector<Request*> (pending_requests.begin(), pending_requests.end());
+        // for (Request* r : vehicle.pending_requests)
+        // {
+        //     actions << vehicle.id << ",pending_requests," << r->id << endl;
+        // }
     }
     
     if (rebalancing)  // Temporary state to revert from rebalancing.  Remove when rebalancing fixed.
@@ -324,7 +354,7 @@ void move_vehicle(Vehicle & vehicle, Trip const & trip, Network const & network,
 }
 
 
-void simulate_vehicle(Vehicle & vehicle, map<Vehicle*, Trip> & assignments, Network const & network, int time)
+void simulate_vehicle(Vehicle & vehicle, map<Vehicle*, Trip> & assignments, Network const & network, int time, bool ignore_trip_route)
 {
     // Prepare simulation.
     vehicle.just_boarded.clear();
@@ -337,7 +367,7 @@ void simulate_vehicle(Vehicle & vehicle, map<Vehicle*, Trip> & assignments, Netw
     
     // Dispatch by job type.
     if (t.requests.size() || vehicle.passengers.size())
-        move_vehicle(vehicle, t, network, time);
+        move_vehicle(vehicle, t, network, time, ignore_trip_route);
     else if (vehicle.offset)
         move_jobless_vehicle(vehicle, network, time);
     else
@@ -351,6 +381,7 @@ struct simulation_obj
     map<Vehicle*, Trip>* assignments;
     Network const* network;
     vector<Vehicle>* vehicles;
+    bool ignore_trip_route;
 };
 
 
@@ -366,9 +397,10 @@ void simulate_dispatch(void* simulation_data)
     auto assignments = data->assignments;
     auto network = data->network;
     auto vehicles = data->vehicles;
+    auto ignore_trip_route = data->ignore_trip_route;
     
     for (auto i = start; i < end; i++)
-        simulate_vehicle((*vehicles)[i], *assignments, *network, time);
+        simulate_vehicle((*vehicles)[i], *assignments, *network, time, ignore_trip_route);
 }
 
 
@@ -376,7 +408,8 @@ void simulate_vehicles(vector<Vehicle> & vehicles,
         map<Vehicle*, Trip> & assignments, 
         Network const & network, 
         int time,
-        Threads & threads)
+        Threads & threads,
+        bool ignore_trip_route)
 {
     if (SIMULATOR_VERBOSE)
     {
@@ -384,7 +417,7 @@ void simulate_vehicles(vector<Vehicle> & vehicles,
         joblogfile << "TIME " << encode_time(time) << endl;
     }
     
-    struct simulation_obj data {time, &assignments, &network, &vehicles};
+    struct simulation_obj data {time, &assignments, &network, &vehicles, ignore_trip_route};
     threads.auto_thread(vehicles.size(), simulate_dispatch, (void*) &data);
 }
 

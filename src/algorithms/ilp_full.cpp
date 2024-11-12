@@ -28,6 +28,7 @@
 #include "routeplanner.hpp"
 #include "settings.hpp"
 
+#include "gurobi_c++.h"
 #include <algorithm>
 #include <cmath>
 #include <mutex> // <-- Guilty party.  Secretly includes "chrono"
@@ -79,6 +80,8 @@ void make_rtvgraph(void* rtv_data)
         
         // Select the vehicle, make our clique list by iteration k.
         Vehicle* v = (*vehicles)[i];
+        stringstream outputs;
+        outputs << "Starting RTV for vid " << v->id << endl;
         vector<vector<Trip>> round;
         set<Request*> previous_assigned_passengers (v->pending_requests.begin(), v->pending_requests.end());
         
@@ -101,7 +104,13 @@ void make_rtvgraph(void* rtv_data)
         initial_pairing.insert(v->pending_requests.begin(), v->pending_requests.end());
         mtx.lock();
         if (initial_pairing.size() > (*vr_edges)[v].size())
-            cout << "Added " << initial_pairing.size() - (*vr_edges)[v].size() << " reqs to vid" << v->id << endl;
+            cout << "Added "; 
+            for (auto r : initial_pairing)
+            {
+                if (find((*vr_edges)[v].begin(), (*vr_edges)[v].end(), r) == (*vr_edges)[v].end())
+                    cout << r->id << ",";
+            }
+            cout << " reqs to vid" << v->id << endl;
         mtx.unlock();
         for (auto r : initial_pairing)
         {
@@ -114,35 +123,74 @@ void make_rtvgraph(void* rtv_data)
                 trip.order_record = path.second;
                 trip.requests = {r};
                 round[1].push_back(trip);
+                outputs << r->id << ",";
             }
         }
+        outputs << endl;
         
+        int existing_trip_size = previous_assigned_passengers.size();
+        // outputs << "Number of assigned passengers: " << existing_trip_size << endl;
+        // outputs << "Number of passengers on board: " << v->passengers.size() << endl;
         // In all subsequent rounds, take pairs from the previous round and build if they add one new element.
         int counter = 0;
-        while (round[round.size() - 1].size() && !timeout)
+        while (round.size() <= existing_trip_size + 1 || (round[round.size() - 1].size() && !timeout))
         {
             int k = round.size();
-            if (k > v->capacity)
+            if (k > 3*v->capacity)
                 break;
             round.push_back(vector<Trip>());
-            for (auto first = 0; first < round[k - 1].size() && !timeout; first++)
+
+            if (k == existing_trip_size)
             {
+                Trip previoustrip = generator::previoustrip(v, *network, time);
+                if (previoustrip.cost < 0)
+                {
+                    cout << "Negative cost for vid " << v->id << endl;
+                    throw runtime_error("Previous assignment no longer feasible. Vid: "+to_string(v->id));
+                }
+                round[k].push_back(previoustrip);
+            }
+
+            if (DISABLE_REASSIGNMENT && k <= existing_trip_size)
+                continue;
+
+            // outputs << "sizeof k-1: " << to_string(round[k - 1].size()) << endl;
+            for (auto first = 0; first < round[k - 1].size(); first++)
+            {
+                // always allow to build on top of previous assignment.
+                if (timeout && (k != existing_trip_size+1 || first > 0))
+                    break;
                 // Get new request set.
                 set<Request*> left (round[k-1][first].requests.begin(), round[k-1][first].requests.end());
-                
-                for (auto second = first + 1; second < round[k - 1].size() && !timeout; second++)
+                // if (k > existing_trip_size)
+                // {
+                //     for (auto r : left)
+                //         outputs << r->id << ",";
+                //     outputs << "left" << endl;
+                // }
+                int prev_round = k - 1;
+                if (k == existing_trip_size+1 && (DISABLE_REASSIGNMENT || timeout))
+                    prev_round = 1;
+                for (auto second = first + 1; second < round[prev_round].size(); second++)
                 {
                     // Check the time.
                     auto end_time = chrono::steady_clock::now();
                     auto duration = chrono::duration_cast<chrono::milliseconds> (end_time - start_time).count();
-                    if (RTV_TIMELIMIT && duration > RTV_TIMELIMIT)
+                    if ((k != existing_trip_size+1 || first > 0) && RTV_TIMELIMIT && duration > RTV_TIMELIMIT)
                     {
+                        outputs << "timeout" << endl;
                         timeout = true;
-                        continue;
+                        break;
                     }
 
                     // Get new request set.
-                    set<Request*> right (round[k-1][second].requests.begin(), round[k-1][second].requests.end());
+                    set<Request*> right (round[prev_round][second].requests.begin(), round[prev_round][second].requests.end());
+                    // if (k == existing_trip_size + 1)
+                    // {
+                    //     for (auto r : right)
+                    //         outputs << r->id << ",";
+                    //     outputs << "right" << endl;
+                    // }
                     set<Request*> requests = left;
                     requests.insert(right.begin(), right.end());
                     counter ++;
@@ -172,6 +220,13 @@ void make_rtvgraph(void* rtv_data)
                         }
                     if (!unique)
                         continue;
+
+                    // if (k == existing_trip_size + 1)
+                    // {
+                    //     for (auto r : requests)
+                    //         outputs << r->id << ",";
+                    //     outputs << "considered" << endl;
+                    // }
                     
                     // Add a placeholder to show we've considered this option.
                     vector<Request*> request_vector (requests.begin(), requests.end());
@@ -199,11 +254,24 @@ void make_rtvgraph(void* rtv_data)
                                 }
                     if (!rr_connected)
                         continue;
-                    
+
+                    // if (k == existing_trip_size + 1)
+                    // {
+                    //     for (auto r : requests)
+                    //         outputs << r->id << ",";
+                    //     outputs << "rr_connected" << endl;
+                    //     outputs << "first " << first << endl;
+                    // }
+
                     // Reject if all subsets (-1) are not present.
                     bool subset_test = true;
+
                     for (auto r : requests)
                     {
+                        if (DISABLE_REASSIGNMENT && previous_assigned_passengers.count(r))
+                            continue;
+                        if (k == existing_trip_size + 1 && first==0 && timeout && previous_assigned_passengers.count(r))
+                            continue;
                         set<Request*> subset = requests;
                         subset.erase(r);
                         bool matched = false;
@@ -221,43 +289,59 @@ void make_rtvgraph(void* rtv_data)
                     }
                     if (!subset_test)
                         continue;
-                    
+
+                    // if (k == existing_trip_size + 1)
+                    // {
+                    //     for (auto r : requests)
+                    //         outputs << r->id << ",";
+                    //     outputs << "preokay" << endl;
+                    // }
                     // Reject if there is no feasible routing for this request set.
                     bool preokay = true;
+                    if (k != existing_trip_size + 1 && first > 0)
                     {
                         auto end_time = chrono::steady_clock::now();
                         auto duration = chrono::duration_cast<chrono::milliseconds>(end_time - start_time).count();
                         preokay = (duration <= RTV_TIMELIMIT);
                     }
-                    pair<int,vector<NodeStop>> path = routeplanner::time_travel(
-                            *v, request_vector, STANDARD, *network, time, start_time);
+                    pair<int,vector<NodeStop>> path;
+                    if (k == existing_trip_size + 1 && first == 0){
+                        path = routeplanner::travel(
+                                *v, request_vector, STANDARD, *network, time);
+                    } else {
+                        path = routeplanner::time_travel(
+                                *v, request_vector, STANDARD, *network, time, start_time);
+                    }
+
                     if (path.first < 0)
                         continue;
 
                     Request* new_request;
                     for (auto & r: right){
-                        if (left.count(r)) 
+                        if (left.count(r) == 0) 
                         {
                             new_request = r;
                             break;
                         }
                     }
-                    // if (path.first == 0) {
-                    // }
-                    // string reqs = "";
-                    // for (auto r: requests) {
-                    //     reqs = reqs + to_string(r->id) + "\t";
-                    // }
-                    // string paths = "";
-                    // for (auto & node: path.second) {
-                    //     paths = paths + to_string(node.r->id) + "\t";
-                    // }
-                    // cout << "Got cost: " << path.first << "\t Vid: " << v->id << "\t Requests: " << reqs << "Path: " << paths <<endl;
-                    // cout << first << "\t" << round[k-1].size() << endl;
-                    // cout << new_request->id << endl;
-                    int seperate_cost = round[k-1][first].cost + new_request->ideal_traveltime;
-                    if (path.first > MAX_ADD_COST*(seperate_cost))
-                        continue;
+                    string reqs = "";
+                    for (auto r: requests) {
+                        reqs = reqs + to_string(r->id) + "\t";
+                    }
+                    string paths = "";
+                    for (auto & node: path.second) {
+                        paths = paths + to_string(node.r->id) + "\t";
+                    }
+                    // outputs << "Got cost: " << path.first << "\t Vid: " << v->id << "\t Requests: " << reqs << "Path: " << paths <<endl;
+                    // outputs << first << "\t" << round[k-1].size() << endl;
+                    // outputs << new_request->ideal_traveltime << endl;
+                    // int seperate_cost = round[k-1][first].cost + new_request->ideal_traveltime;
+                    // if (path.first > MAX_ADD_COST*(seperate_cost))
+                    //     continue;
+
+                    // for (auto r : requests)
+                    //     outputs << r->id << ",";
+                    // outputs << endl;
                     
                     // Accepted!  Save this new trip!
                     Trip trip {};
@@ -275,6 +359,8 @@ void make_rtvgraph(void* rtv_data)
                     round[k].pop_back();
                     i--;
                 }
+
+            // outputs << "Trip size: " << k << ", number of trips: " << round[k].size() << endl;
         }
         
         // Convert into appropriate format.  This include adding in the pending requests.
@@ -294,19 +380,20 @@ void make_rtvgraph(void* rtv_data)
 
             int obj = previoustrip.cost;
             if (obj == -1)
-            {
-                cout << "The vehicle is " << v->id << endl;
-                cout << "Requests are: ";
-                for (auto r : v->pending_requests)
-                    cout << r->id << " ";
-                cout << endl;
                 throw runtime_error("Previous assignment no longer feasible.");
-            }
         }
         
         mtx.lock();
         (*trip_list)[v] = potential_trip_list;
         mtx.unlock();
+
+        // outputs << "Ended RTV for vid " << v->id << endl;
+        // mtx.lock();
+        // {
+        //     ofstream debuglogfile (RESULTS_DIRECTORY + "/debug.log", std::ios_base::app);
+        //     debuglogfile << outputs.rdbuf();
+        // }
+        // mtx.unlock();
 
     }
 }
@@ -342,26 +429,71 @@ void make_rvgraph(void* rv_data)
         int origin = r->origin;
         double buffer = 0;
         vector<Vehicle*> compatible_vehicles;
+        stringstream outputs;
+        outputs << "Starting RV for rid " << r->id << endl;
 
         multimap<int,Vehicle*> nearest_vs;
-        for (Vehicle* v : *vehicles)
+        if (!DISABLE_DIRECT_TRIPS || r->original_req_id != -1)  // Ignore direct trips
         {
-            double min_wait = network->get_vehicle_time(*v, origin) - buffer;
-            if (time + min_wait > r->latest_boarding) continue;
-            nearest_vs.insert(make_pair(min_wait, v));
-        }
-        
-        int count = 0;
-        for (auto &x : nearest_vs)
-        {
-            Vehicle* v = x.second;
-            pair<int,vector<NodeStop>> raw_path = routeplanner::travel(*v, requests, STANDARD, *network, time);
-            if (raw_path.first >=0 )
+            for (Vehicle* v : *vehicles)
             {
-                compatible_vehicles.push_back(v);
-                if (PRUNING_RV_K > 0 && ++count >= PRUNING_RV_K) break;
+                double min_wait = network->get_vehicle_time(*v, origin) - buffer;
+                if (time + min_wait > r->latest_boarding) continue;
+                nearest_vs.insert(make_pair(min_wait, v));
             }
         }
+
+        outputs << "Size of nearest_vs: " << nearest_vs.size() << endl;
+        
+        int time_to_pickup = r->latest_boarding - time;
+        outputs << "Time to pickup: " << time_to_pickup << endl;
+        int count = 0;
+        if (!r->assigned) {    
+            for (auto &x : nearest_vs)
+            {
+                Vehicle* v = x.second;
+                pair<int,vector<NodeStop>> raw_path = routeplanner::travel(*v, requests, STANDARD, *network, time);
+                if (raw_path.first >=0 )
+                {
+                    compatible_vehicles.push_back(v);
+                    // if (PRUNING_RV_K > 0 && ++count >= PRUNING_RV_K) break;
+                }
+            }
+        } else {
+            std::map<const Vehicle*,double> cost_ratio;
+
+            for (auto &x : nearest_vs)
+            {
+                Vehicle* v = x.second;
+                pair<int,vector<NodeStop>> raw_path = routeplanner::travel(*v, requests, STANDARD, *network, time);
+                if (raw_path.first >=0 )
+                {
+                    compatible_vehicles.push_back(v);
+                    cost_ratio[v] = (double)raw_path.first/(r->ideal_traveltime);
+                    if (PRUNING_RV_K > 0 && ++count >= PRUNING_RV_K/2 && time_to_pickup <= 300) break;
+                }
+            }
+
+            auto sort_lambda = [&cost_ratio](const Vehicle* a, const Vehicle* b) -> bool
+            {
+                double avalue = cost_ratio[a]; // detour_factor(r1, a, network);
+                double bvalue = cost_ratio[b]; // detour_factor(r1, b, network);
+                return avalue < bvalue;
+            };
+            sort(compatible_vehicles.begin(), compatible_vehicles.end(), sort_lambda);
+            if (PRUNING_RV_K > 0 && compatible_vehicles.size() > PRUNING_RV_K) // Keep only the k best!
+                compatible_vehicles.resize(PRUNING_RV_K);
+        }
+
+        outputs << "Size of compatible_vehicles: " << compatible_vehicles.size() << endl;
+        outputs << "Ended RV for rid " << r->id << endl;
+        // mtx.lock();
+        // {
+        //     ofstream debuglogfile (RESULTS_DIRECTORY + "/debug.log", std::ios_base::app);
+        //     debuglogfile << outputs.rdbuf();
+        // }
+        // mtx.unlock();
+        
         
         mtx.lock();
         (*rv_edges)[r] = compatible_vehicles;
@@ -422,10 +554,15 @@ void make_rrgraph(void* rr_data)
         Request* r1 = (*requests)[i];
         int start_node = r1->origin;
         vector<Request*> compatible_requests;
+        std::map<const Request*,double> cost_ratio;
         
         for (Request* r2 : *requests)
         {
             if (*r1 == *r2)  // Don't pair with itself!
+                continue;
+            if (DISABLE_DIRECT_TRIPS && r1->original_req_id == -1)  // Ignore direct trips
+                break;
+            if (DISABLE_DIRECT_TRIPS && r2->original_req_id == -1)  // Ignore direct trips
                 continue;
             // avoid pairing different multi-modal combination of the same request
             if (r1->original_req_id != -1 && r2->original_req_id != -1) {
@@ -433,7 +570,7 @@ void make_rrgraph(void* rr_data)
                     continue;
             }
             // avoid pairing a first/last leg and the direct option of the same request
-            if (r2->id == r1->original_req_id && r1->id == r2->original_req_id) {
+            if (r2->id == r1->original_req_id || r1->id == r2->original_req_id) {
                 continue;
             }
             vector<Request*> request_list { r1 , r2 };
@@ -450,14 +587,19 @@ void make_rrgraph(void* rr_data)
             pair<int,vector<NodeStop>> raw_path = routeplanner::travel(dummyVehicle, request_list, STANDARD,
                     *network, time);
             double direct_travel_cost = r1->ideal_traveltime + r2->ideal_traveltime;
-            if (raw_path.first >= 0 && raw_path.first <= MAX_ADD_COST*direct_travel_cost) // I.e., valid trip.
+            // if (raw_path.first >= 0 && raw_path.first <= MAX_ADD_COST*direct_travel_cost) // I.e., valid trip.
+            if (raw_path.first >= 0) // I.e., valid trip.
+            {
                 compatible_requests.push_back(r2);
+                cost_ratio[r2] = (double)raw_path.first / direct_travel_cost;
+            }
+
         }
         
-        auto sort_lambda = [network, r1](const Request* a, const Request* b) -> bool
+        auto sort_lambda = [network, &cost_ratio, r1](const Request* a, const Request* b) -> bool
         {
-            double avalue = detour_factor(r1, a, network);
-            double bvalue = detour_factor(r1, b, network);
+            double avalue = cost_ratio[a]; // detour_factor(r1, a, network);
+            double bvalue = cost_ratio[b]; // detour_factor(r1, b, network);
             return avalue < bvalue;
         };
         sort(compatible_requests.begin(), compatible_requests.end(), sort_lambda);
@@ -479,6 +621,7 @@ std::map<Vehicle*, Trip> assignment(
         Threads & threads)
 {
     info("Building R-V edges of RV graph", Yellow);
+    int vr_edge_cnt = 0;
     map<Vehicle*, vector<Request*>> vr_edges;  // RV edges indexed by vehicle id.
     {
         map<Request*, vector<Vehicle*>> rv_edges;
@@ -490,9 +633,13 @@ std::map<Vehicle*, Trip> assignment(
             Request* r = x.first;
             vector<Vehicle*> vs = x.second;
             for (auto v : vs)
+            {
                 vr_edges[v].push_back(r);
+                vr_edge_cnt += 1;
+            }
         }
     }
+    info("Total R-V edges of RV graph " + to_string(vr_edge_cnt), Yellow);
     
     info("Buidling R-R edges of RV graph", Yellow);
     map<Request*, set<Request*>> rr_edges;  // RR edges indexed by request id.
@@ -500,8 +647,39 @@ std::map<Vehicle*, Trip> assignment(
         struct rr_thread_data rr_data {time, &rr_edges, &network, &requests};
         threads.auto_thread(requests.size(), make_rrgraph, (void*) &rr_data);
     }
+
+    // stringstream rr; //ofstream rtv(RESULTS_DIRECTORY + "/rtv.log", ios_base::app); // Stringstream disables
+    // rr << "TIME STAMP " << encode_time(time) << endl;
+    // for (auto & x : rr_edges)
+    // {
+    //     Request* r = x.first;
+    //     rr << "{'rid':" << r->id << ",'rr':[";
+    //     for (auto & res : x.second)
+    //     {
+    //         rr << res->id << ",";
+    //     }
+    //     rr << "]}" << endl;
+    // }
+    // mtx.lock();
+    // {
+    //     ofstream rrfile(RESULTS_DIRECTORY + "/rr.log", ios_base::app);
+    //     rrfile << rr.rdbuf();
+    // }
+    // mtx.unlock();
+
+    int rr_count = 0;
+    for (auto & x : rr_edges)
+        rr_count += x.second.size();
+    info("RR edges is of size " + to_string(rr_count), Red);
     
     info("Building RTV graph", Yellow);
+    mtx.lock();
+    {
+        ofstream debuglog(RESULTS_DIRECTORY + "/debug.log", ios_base::app);
+        debuglog << "TIME STAMP " << encode_time(time) << endl;
+    }
+    mtx.unlock();
+
     map<Vehicle*, vector<Trip>> trip_list;  // Store possible trips per vehicle
     {
         vector<Vehicle*> sorted_vs = vehicles;
@@ -522,6 +700,23 @@ std::map<Vehicle*, Trip> assignment(
         threads.mega_thread(vehicles.size(), make_rtvgraph, (void*) &rtv_data);
     }
     
+    map<Vehicle*, vector<Trip>> linear_trip_list;
+    for (auto & x : trip_list)
+    {
+        Vehicle* v = x.first;
+        set<Request*> previous_assigned_passengers (v->pending_requests.begin(), v->pending_requests.end());
+        vector<Trip> trips = x.second;
+        for (auto & t : trips)
+        {
+            set<Request*> trip_requests = set<Request*>(t.requests.begin(), t.requests.end());
+            if (std::includes(trip_requests.begin(), trip_requests.end(), 
+                previous_assigned_passengers.begin(), previous_assigned_passengers.end()))
+            {
+                linear_trip_list[v].push_back(t);
+            }
+        }
+    }
+
     int count = 0;
     for (auto & x : trip_list)
         count += x.second.size();
@@ -571,21 +766,73 @@ std::map<Vehicle*, Trip> assignment(
     }
 
     // Output trace of generated trip_list.
-    stringstream rtv; //ofstream rtv(RESULTS_DIRECTORY + "/rtv.log", ios_base::app); // Stringstream disables
-    rtv << "TIME STAMP " << encode_time(time) << endl;
-    for (auto & x : trip_list)
+    // stringstream rtv; //ofstream rtv(RESULTS_DIRECTORY + "/rtv.log", ios_base::app); // Stringstream disables
+    // rtv << "TIME STAMP " << encode_time(time) << endl;
+    // for (auto & x : trip_list)
+    // {
+    //     int vid = x.first->id;
+    //     for (auto & t : x.second)
+    //     {
+    //         rtv << "{'v':" << vid << ",'rs':[";
+    //         for (auto r : t.requests)
+    //             rtv << r->id << ",";
+    //         rtv << "],'c':" << t.cost << "}" << endl;
+    //     }
+    // }
+    // mtx.lock();
+    // {
+    //     ofstream rtvfile(RESULTS_DIRECTORY + "/rtv.log", ios_base::app);
+    //     rtvfile << rtv.rdbuf();
+    // }
+    // mtx.unlock();
+
+    map<Vehicle*,Trip> assignment;
+    double time_limit = GUROBI_TIME_LIMIT;
+    
+    map<Vehicle*,Trip> empty_assignment;
+    map<Vehicle*,Trip> linear_assignment = ilp_common_gurobi::ilp_assignment_gurobi(linear_trip_list, requests, time, 20, empty_assignment);
+    
     {
-        int vid = x.first->id;
-        for (auto & t : x.second)
-        {
-            rtv << "{'v':" << vid << ",'rs':[";
-            for (auto r : t.requests)
-                rtv << r->id << ",";
-            rtv << "],'c':" << t.cost << "}" << endl;
+        ofstream assignment_file(RESULTS_DIRECTORY + "/linear_assignment.log", std::ios_base::app);
+        assignment_file << "TIME STAMP:" << encode_time(time) << endl;
+        for (auto &t : linear_assignment) {
+            assignment_file << "\tAssigned vid " << t.first->id << "\t";
+            for (auto r : t.second.requests) {
+                assignment_file << r->id << "\t";
+            }
+            assignment_file << endl;
         }
     }
 
-    return ilp_common_gurobi::ilp_assignment_gurobi(trip_list, requests, time);
+    try { 
+        assignment = ilp_common_gurobi::ilp_assignment_gurobi(trip_list, requests, time, time_limit, linear_assignment);
+    } catch (GRBException e) {
+        cout << "GRBException ocurred" << endl;
+        cout << "Error code = " << e.getErrorCode() << endl;
+        cout << e.getMessage() << endl;
+        assignment = linear_assignment;
+    }
+
+    {
+        ofstream unassigned_file(RESULTS_DIRECTORY + "/unassigned_requests.log", std::ios_base::app);
+        unassigned_file << "TIME STAMP:" << encode_time(time) << endl;
+        set<int> assigned_requests_ids;
+        for (const auto& pair : assignment) {
+            for (const auto& req : pair.second.requests) {
+                if (req->original_req_id != -1)
+                    assigned_requests_ids.insert(req->original_req_id);
+                else
+                    assigned_requests_ids.insert(req->id);
+            }
+        }
+        for (const auto& req : requests) {
+            if (req->original_req_id == -1 && assigned_requests_ids.count(req->id) == 0) {
+                unassigned_file << "Unassigned request id: " << req->id << endl;
+            }
+        }
+    }
+
+    return assignment;
 }
 
 }

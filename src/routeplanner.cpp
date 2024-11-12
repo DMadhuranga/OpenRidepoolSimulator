@@ -100,12 +100,12 @@ int get_alight_deadline(Request const * r)
 enum Action {PICKUP, DROPOFF, NO_ACTION};
 
 pair<int,vector<NodeStop*>> recursive_search(int initial_location, int residual_capacity,
-        set<MetaNodeStop*,MnsSort> const & initially_available, Network const & network, int time, int best_time,
-        Action prev_action)
+        set<MetaNodeStop*,MnsSort> const & initially_available, Network const & network, int time, int best_cost,
+        int current_cost, Action prev_action)
 {
     // If there is no new available stop to add...
     if (!initially_available.size())
-        return make_pair(time, vector<NodeStop*>()); // VMT objective
+        return make_pair(current_cost, vector<NodeStop*>()); // VMT objective
     
     // Iterate through the possible next NodeStops to visit.
     vector<NodeStop*> best_tail;
@@ -119,7 +119,8 @@ pair<int,vector<NodeStop*>> recursive_search(int initial_location, int residual_
         
         // Compute time of visit.
         int new_location = m->node->node;
-        int arrival_time = time + network.get_time(initial_location, new_location);
+        int travel_time = network.get_time(initial_location, new_location);
+        int arrival_time = time + travel_time;
         if (m->node->is_pickup)
             if (m->node->r->entry_time > arrival_time)
                 arrival_time = m->node->r->entry_time;
@@ -129,11 +130,9 @@ pair<int,vector<NodeStop*>> recursive_search(int initial_location, int residual_
             arrival_time += DWELL_ALIGHT;
         else if (prev_action == PICKUP && (!m->node->is_pickup || initial_location != new_location))
             arrival_time += DWELL_PICKUP;
-        if (m->node->is_pickup && m->node->r->entry_time > arrival_time)
-            arrival_time = m->node->r->entry_time;
         
         // Skip if this violates the time bound.
-        if (best_time != -1 && arrival_time >= best_time) // Use for VMT objective
+        if (best_cost != -1 && current_cost + travel_time >= best_cost) // Use for VMT objective
             continue;
         
         // Assert this satisfies the capacity constraints.
@@ -178,27 +177,27 @@ pair<int,vector<NodeStop*>> recursive_search(int initial_location, int residual_
         // Recursive call to get cost, partial reverse path of tail.
         Action this_action = (m->node->is_pickup ? PICKUP : DROPOFF);
         pair<int,vector<NodeStop*>> tail = recursive_search(new_location, new_residual_capacity,
-                remaining_nodes, network, arrival_time, best_time, this_action);
+                remaining_nodes, network, arrival_time, best_cost, current_cost + travel_time, this_action);
         
         // If this is the best we have seen so far, update!
         if (tail.first == -1)
             continue;
-        if (best_time == -1 || tail.first < best_time)
+        if (best_cost == -1 || tail.first < best_cost)
         {
-            best_time = tail.first;
+            best_cost = tail.first;
             best_tail = tail.second;
             best_tail.push_back(m->node);
         }
     }
     
-    return make_pair(best_time, best_tail);
+    return make_pair(best_cost, best_tail);
 }
 
 pair<int,vector<NodeStop*>> recursive_search(int initial_location, int residual_capacity,
-        set<MetaNodeStop*> const & initially_available, Network const & network, int time, int best_time)
+        set<MetaNodeStop*> const & initially_available, Network const & network, int time, int best_time, int current_time)
 {
     set<MetaNodeStop*,MnsSort> update (initially_available.begin(), initially_available.end());
-    return recursive_search(initial_location, residual_capacity, update, network, time, best_time, NO_ACTION);
+    return recursive_search(initial_location, residual_capacity, update, network, time, best_time, current_time, NO_ACTION);
 }
 
 pair<int,vector<NodeStop>> rebalance(Vehicle const & v, vector<Request*> const & rs, Network const & network)
@@ -305,7 +304,7 @@ pair<int,vector<NodeStop>> new_travel(Vehicle const & v, vector<Request*> const 
     pair<int, vector<NodeStop*>> optimal;
     if (CTSP_OBJECTIVE == CTSP_VMT)
         optimal = recursive_search(start_node, v.capacity - v.passengers.size(),
-                initially_available, network, call_time, -1);
+                initially_available, network, call_time, -1, 0);
     else
         throw runtime_error("No valid CTSP objective selected.");
     
@@ -335,7 +334,7 @@ pair<int,vector<NodeStop>> memory(Vehicle const & v, Network const & network, in
     pair<int, vector<NodeStop*>> optimal;
     if (CTSP_OBJECTIVE == CTSP_VMT)
         optimal = recursive_search(start_node, v.capacity - v.passengers.size(),
-            initially_available, network, call_time, -1);
+            initially_available, network, call_time, -1, 0);
     else
         throw runtime_error("No valid CTSP objective selected.");
     return format_path(start_node, network, optimal, time);
@@ -364,12 +363,12 @@ pair<int,vector<NodeStop>> travel(Vehicle const & vehicle, vector<Request*> cons
 
 
 pair<int,vector<NodeStop*>> recursive_search_timed(int initial_location, int residual_capacity,
-        set<MetaNodeStop*,MnsSort> const & initially_available, Network const & network, int time, int best_time,
-        Action prev_action, chrono::steady_clock::time_point t)
+        set<MetaNodeStop*,MnsSort> const & initially_available, Network const & network, int time, int best_cost, 
+        int current_cost, Action prev_action, chrono::steady_clock::time_point t)
 {
     // If there is no new available stop to add...
     if (!initially_available.size())
-        return make_pair(time, vector<NodeStop*>()); // VMT objective
+        return make_pair(current_cost, vector<NodeStop*>()); // VMT objective
     
     // Iterate through the possible next NodeStops to visit.
     vector<NodeStop*> best_tail;
@@ -393,7 +392,8 @@ pair<int,vector<NodeStop*>> recursive_search_timed(int initial_location, int res
         
         // Compute time of visit.
         int new_location = m->node->node;
-        int arrival_time = time + network.get_time(initial_location, new_location);
+        int travel_time = network.get_time(initial_location, new_location);
+        int arrival_time = time + travel_time;
         if (m->node->is_pickup)
             if (m->node->r->entry_time > arrival_time)
                 arrival_time = m->node->r->entry_time;
@@ -405,7 +405,7 @@ pair<int,vector<NodeStop*>> recursive_search_timed(int initial_location, int res
             arrival_time += DWELL_PICKUP;
         
         // Skip if this violates the time bound.
-        if (best_time != -1 && arrival_time >= best_time) // Use for VMT objective
+        if (best_cost != -1 && current_cost + travel_time >= best_cost) // Use for VMT objective
             continue;
         
         // Assert this satisfies the capacity constraints.
@@ -450,28 +450,28 @@ pair<int,vector<NodeStop*>> recursive_search_timed(int initial_location, int res
         // Recursive call to get cost, partial reverse path of tail.
         Action this_action = (m->node->is_pickup ? PICKUP : DROPOFF);
         pair<int,vector<NodeStop*>> tail = recursive_search_timed(new_location, new_residual_capacity,
-                remaining_nodes, network, arrival_time, best_time, this_action, t);
+                remaining_nodes, network, arrival_time, best_cost, current_cost + travel_time, this_action, t);
         
         // If this is the best we have seen so far, update!
         if (tail.first == -1)
             continue;
-        if (best_time == -1 || tail.first < best_time)
+        if (best_cost == -1 || tail.first < best_cost)
         {
-            best_time = tail.first;
+            best_cost = tail.first;
             best_tail = tail.second;
             best_tail.push_back(m->node);
         }
     }
     
-    return make_pair(best_time, best_tail);
+    return make_pair(best_cost, best_tail);
 }
 
 pair<int,vector<NodeStop*>> recursive_search_timed(int initial_location, int residual_capacity,
         set<MetaNodeStop*> const & initially_available, Network const & network, int time, int best_time,
-        chrono::steady_clock::time_point t)
+        int current_cost, chrono::steady_clock::time_point t)
 {
     set<MetaNodeStop*,MnsSort> update (initially_available.begin(), initially_available.end());
-    return recursive_search_timed(initial_location, residual_capacity, update, network, time, best_time, NO_ACTION, t);
+    return recursive_search_timed(initial_location, residual_capacity, update, network, time, best_time, current_cost, NO_ACTION, t);
 }
 
 pair<int,vector<NodeStop>> new_time_travel(Vehicle const & v, vector<Request*> const & rs,
@@ -564,7 +564,7 @@ pair<int,vector<NodeStop>> new_time_travel(Vehicle const & v, vector<Request*> c
     pair<int, vector<NodeStop*>> optimal;
     if (CTSP_OBJECTIVE == CTSP_VMT)
         optimal = recursive_search_timed(start_node, v.capacity - v.passengers.size(),
-                initially_available, network, call_time, -1, t);
+                initially_available, network, call_time, -1, 0, t);
     else
         throw runtime_error("No valid CTSP objective selected for timed feature.");
     

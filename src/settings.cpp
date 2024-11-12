@@ -56,10 +56,14 @@ string REQUEST_DATA_FILE = "requests.csv";
 string LEG_REQUEST_DATA_FILE = "leg_requests.csv";
 string RESULTS_DIRECTORY = "results";
 int RTV_TIMELIMIT = 0;
-double GRB_TIME_LIMIT = 90.0;
+double GUROBI_TIME_LIMIT = 90;
 string TIMEFILE = "times.csv";
 string VEHICLE_DATA_FILE = "vehicles.csv";
 int VEHICLE_LIMIT = 1000; // 0;
+bool LINEAR_ASSIGNMENT = false;
+bool DISABLE_DIRECT_TRIPS = false;
+bool DISABLE_REASSIGNMENT = false;
+bool PRE_SOLVE_ILP = false;
 
 map<string,Algorithm> algorithm_index {
     {"ILP_FULL", ILP_FULL}};
@@ -165,12 +169,64 @@ void initialize(int argc, char** argv)
                 throw runtime_error("Argument could not be converted into a boolean.");
             }
         }
+        else if (key == "LINEAR_ASSIGNMENT")
+        {
+            string s = boost::algorithm::to_lower_copy(value);
+            if (s == "true")
+                LINEAR_ASSIGNMENT = true;
+            else if (s == "false")
+                LINEAR_ASSIGNMENT = false;
+            else
+            {
+                cout << "For " << key << " trying to interpret \"" << value << "\"." << endl;
+                throw runtime_error("Argument could not be converted into a boolean.");
+            }
+        }
+        else if (key == "DISABLE_DIRECT_TRIPS")
+        {
+            string s = boost::algorithm::to_lower_copy(value);
+            if (s == "true")
+                DISABLE_DIRECT_TRIPS = true;
+            else if (s == "false")
+                DISABLE_DIRECT_TRIPS = false;
+            else
+            {
+                cout << "For " << key << " trying to interpret \"" << value << "\"." << endl;
+                throw runtime_error("Argument could not be converted into a boolean.");
+            }
+        }
+        else if (key == "DISABLE_REASSIGNMENT")
+        {
+            string s = boost::algorithm::to_lower_copy(value);
+            if (s == "true")
+                DISABLE_REASSIGNMENT = true;
+            else if (s == "false")
+                DISABLE_REASSIGNMENT = false;
+            else
+            {
+                cout << "For " << key << " trying to interpret \"" << value << "\"." << endl;
+                throw runtime_error("Argument could not be converted into a boolean.");
+            }
+        }
+        else if (key == "PRE_SOLVE_ILP")
+        {
+            string s = boost::algorithm::to_lower_copy(value);
+            if (s == "true")
+                PRE_SOLVE_ILP = true;
+            else if (s == "false")
+                PRE_SOLVE_ILP = false;
+            else
+            {
+                cout << "For " << key << " trying to interpret \"" << value << "\"." << endl;
+                throw runtime_error("Argument could not be converted into a boolean.");
+            }
+        }
         else if (key == "INTERVAL")
             INTERVAL = stoi(value);
         else if (key == "RTV_TIMELIMIT")
             RTV_TIMELIMIT = stoi(value);
         else if (key == "GRB_TIME_LIMIT")
-            GRB_TIME_LIMIT = stod(value);
+            GUROBI_TIME_LIMIT = stod(value);
         else if (key == "DWELL_PICKUP")
             DWELL_PICKUP = stoi(value);
         else if (key == "DWELL_ALIGHT")

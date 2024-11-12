@@ -23,6 +23,7 @@
  */
 
 #include "algorithms/ilp_full.hpp"
+#include "algorithms/ilp_full_linear.hpp"
 #include "generator.hpp"
 #include "settings.hpp"
 
@@ -43,6 +44,8 @@ std::map<Vehicle*, Trip> trip_assignment(
         Network const & network,
         Threads & threads)
 {
+    if (LINEAR_ASSIGNMENT)
+        return ilp_full_linear::assignment(vehicles, requests, time, network, threads);
     return ilp_full::assignment(vehicles, requests, time, network, threads);
 }
 

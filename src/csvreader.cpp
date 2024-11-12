@@ -151,6 +151,9 @@ vector<Request> csvreader::load_requests(Network const & network, bool first_las
         r.entry_time = read_time(requested_time_string);
         r.ideal_traveltime = network.get_time(r.origin, r.destination);
         if (first_last_legs) {
+            // if (leg_type_string == "0") {
+            //     continue;
+            // }
             r.bus_line_info = bus_line_data_string;
             r.leg_type = stoi(leg_type_string);
             r.original_req_id = stoi(original_req_id_string);

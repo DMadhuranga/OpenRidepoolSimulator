@@ -36,7 +36,7 @@
 #include "trip.hpp"
 #include "vehicle.hpp"
 
-#include "gurobi_c++.h"
+// #include "gurobi_c++.h"
 #include <chrono>
 #include <fstream>
 #include <iostream>
@@ -66,10 +66,14 @@ int main(int argc, char *argv[])
         results << "REQUEST_DATA_FILE " << REQUEST_DATA_FILE << endl;
         results << "VEHICLE_DATA_FILE " << VEHICLE_DATA_FILE << endl;
         results << "CARSIZE " << CARSIZE << endl;
-        results << "GRB_TIME_LIMIT " << GRB_TIME_LIMIT << endl;
+        results << "GUROBI_TIME_LIMIT " << GUROBI_TIME_LIMIT << endl;
         results << "ALLOW_MULTI_MODAL " << ALLOW_MULTI_MODAL << endl;
         results << "INITIAL_TIME " << INITIAL_TIME << endl;
         results << "FINAL_TIME " << FINAL_TIME << endl;
+        results << "LINEAR_ASSIGNMENT " << LINEAR_ASSIGNMENT << endl;
+        results << "PRUNING_RV_K " << PRUNING_RV_K << endl;
+        results << "PRUNING_RR_K " << PRUNING_RR_K << endl;
+        results << "RTV_TIMELIMIT " << RTV_TIMELIMIT << endl;
         results << "ALGORITHM ";
         switch (ALGORITHM)
         {
@@ -152,7 +156,7 @@ int main(int argc, char *argv[])
 
     { // Add header to the top of the ilp log file.
         ofstream ilpfile(RESULTS_DIRECTORY + "/ilp.csv", std::ios_base::app);
-        ilpfile << "Time\tObj\tSolverTime\tAbsGap\tRelGap\tNumAssigned\tStatus" << endl;
+        ilpfile << "Time\tObj\tSolverTime\tRelGap\tNumAssigned\tStatus" << endl;
     }
 
 
@@ -191,16 +195,18 @@ int main(int argc, char *argv[])
         // Select which trips to assign.
         info("Starting trip assignment problem", Yellow);
         map<Vehicle*, Trip> assigned_trips;
+        bool ignore_trip_route = false;
         
-        try { 
-            assigned_trips = generator::trip_assignment(active_vehicles,
-                    active_requests, time, network, threads);
-        } catch (GRBException e) {
-            assigned_trips = prev_assignment;
-            cout << "GRBException ocurred" << endl;
-            cout << "Error code = " << e.getErrorCode() << endl;
-            cout << e.getMessage() << endl;
-        }
+        assigned_trips = generator::trip_assignment(active_vehicles,
+                active_requests, time, network, threads);
+        // try { 
+        // } catch (GRBException e) {
+        //     assigned_trips = prev_assignment;
+        //     ignore_trip_route = true;
+        //     cout << "GRBException ocurred" << endl;
+        //     cout << "Error code = " << e.getErrorCode() << endl;
+        //     cout << e.getMessage() << endl;
+        // }
 
         // Filter null trips so we don't confuse the rebalancing system.
         set<Vehicle*> blank_trips;
@@ -260,7 +266,7 @@ int main(int argc, char *argv[])
 
         // Perform the simulation.
         info("Vehicle simulation started", Yellow);
-        simulator::simulate_vehicles(vehicles, assigned_trips, network, time, threads);
+        simulator::simulate_vehicles(vehicles, assigned_trips, network, time, threads, ignore_trip_route);
 
         clock_stop = std::chrono::high_resolution_clock::now();
         double duration_simulation = 0.000001 * duration_cast<microseconds>(clock_stop - clock_start).count();
@@ -374,13 +380,20 @@ int main(int argc, char *argv[])
 
         info("Done with iteration", Green);
 
-        // Filter rebalancing trips.
+        // Remove rebalancing trips.
         set<Vehicle*> rebalancing_vehicles;
         for (auto & v : vehicles)
             if (assigned_trips.count(&v) && assigned_trips[&v].is_fake)
                 rebalancing_vehicles.insert(&v);
         for (auto v : rebalancing_vehicles)
             assigned_trips.erase(v);
+        // remove old routing as it can be obsolete
+        for (auto & v : vehicles)
+            if (assigned_trips.count(&v)) {
+                Trip t = assigned_trips[&v];
+                t.use_memory = false;
+                t.order_record.clear();
+            }
         prev_assignment = assigned_trips;
 
     } /* End of iteration loop. */

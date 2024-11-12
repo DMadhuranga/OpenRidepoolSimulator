@@ -22,23 +22,25 @@
  * THE SOFTWARE.
  */
  
-#ifndef ALGORITHMS_ILP_COMMON_GUROBI_HPP
-#define ALGORITHMS_ILP_COMMON_GUROBI_HPP
+#ifndef ALGORITHMS_ILP_FULL_LINEAR_HPP
+#define ALGORITHMS_ILP_FULL_LINEAR_HPP
 
+#include "network.hpp"
 #include "request.hpp"
+#include "threads.hpp"
 #include "trip.hpp"
 #include "vehicle.hpp"
 
 #include <map>
 #include <vector>
 
-namespace ilp_common_gurobi
+namespace ilp_full_linear
 {
-std::map<Vehicle*,Trip> ilp_assignment_gurobi(
-        std::map<Vehicle*, std::vector<Trip>> const & trip_list, 
-        std::vector<Request*> const & requests, 
+std::map<Vehicle*, Trip> assignment(
+        std::vector<Vehicle*> const & vehicles,
+        std::vector<Request*> const & requests,
         int time,
-        double time_limit,
-        std::map<Vehicle*, Trip> const & linear_assignment);
+        Network const & network,
+        Threads & threads);
 }
-#endif /* ALGORITHMS_ILP_COMMON_GUROBI_HPP */
+#endif /* ALGORITHMS_ILP_FULL_LINEAR_HPP */

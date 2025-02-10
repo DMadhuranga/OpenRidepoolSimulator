@@ -129,8 +129,8 @@ void make_rtvgraph(void* rtv_data)
         outputs << endl;
         
         int existing_trip_size = previous_assigned_passengers.size();
-        // outputs << "Number of assigned passengers: " << existing_trip_size << endl;
-        // outputs << "Number of passengers on board: " << v->passengers.size() << endl;
+        outputs << "Number of assigned passengers: " << existing_trip_size << endl;
+        outputs << "Number of passengers on board: " << v->passengers.size() << endl;
         // In all subsequent rounds, take pairs from the previous round and build if they add one new element.
         int counter = 0;
         while (round.size() <= existing_trip_size + 1 || (round[round.size() - 1].size() && !timeout))
@@ -360,7 +360,7 @@ void make_rtvgraph(void* rtv_data)
                     i--;
                 }
 
-            // outputs << "Trip size: " << k << ", number of trips: " << round[k].size() << endl;
+            outputs << "Trip size: " << k << ", number of trips: " << round[k].size() << endl;
         }
         
         // Convert into appropriate format.  This include adding in the pending requests.

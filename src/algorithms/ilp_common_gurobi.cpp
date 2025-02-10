@@ -364,6 +364,7 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
     }
     cout << "Made " << icount << " assignments." << endl;
     // Write statistics.
+    if (linear_assignment.size())
     {
         ofstream ilpfile(RESULTS_DIRECTORY + "/ilp.csv", std::ios_base::app);
         
@@ -376,6 +377,15 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
         // bool is_optimal = (M->getPrimalSolutionStatus() == SolutionStatus::NearOptimal ||
         //         M->getPrimalSolutionStatus() == SolutionStatus::Optimal);
         // ilpfile << (is_optimal ? "Optimal" : "Suboptimal") << endl;
+    } else {
+        ofstream ilpfile(RESULTS_DIRECTORY + "/linear_a_ilp.csv", std::ios_base::app);
+        
+        ilpfile << encode_time(time) << "\t";
+        ilpfile << model.get(GRB_DoubleAttr_ObjVal) << "\t";
+        ilpfile << model.get(GRB_DoubleAttr_Runtime) << "\t";
+        ilpfile << model.get(GRB_DoubleAttr_MIPGap) << "\t";
+        ilpfile << icount << "\t";
+        ilpfile << model.get(GRB_IntAttr_Status) << endl;
     }
     
     map<Vehicle*, Trip> assigned_trips;

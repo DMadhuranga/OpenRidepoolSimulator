@@ -368,11 +368,11 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
     {
         ofstream ilpfile(RESULTS_DIRECTORY + "/ilp.csv", std::ios_base::app);
         
-        ilpfile << encode_time(time) << "\t";
-        ilpfile << model.get(GRB_DoubleAttr_ObjVal) << "\t";
-        ilpfile << model.get(GRB_DoubleAttr_Runtime) << "\t";
-        ilpfile << model.get(GRB_DoubleAttr_MIPGap) << "\t";
-        ilpfile << icount << "\t";
+        ilpfile << encode_time(time) << ",";
+        ilpfile << model.get(GRB_DoubleAttr_ObjVal) << ",";
+        ilpfile << model.get(GRB_DoubleAttr_Runtime) << ",";
+        ilpfile << model.get(GRB_DoubleAttr_MIPGap) << ",";
+        ilpfile << icount << ",";
         ilpfile << model.get(GRB_IntAttr_Status) << endl;
         // bool is_optimal = (M->getPrimalSolutionStatus() == SolutionStatus::NearOptimal ||
         //         M->getPrimalSolutionStatus() == SolutionStatus::Optimal);
@@ -380,11 +380,11 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
     } else {
         ofstream ilpfile(RESULTS_DIRECTORY + "/linear_a_ilp.csv", std::ios_base::app);
         
-        ilpfile << encode_time(time) << "\t";
-        ilpfile << model.get(GRB_DoubleAttr_ObjVal) << "\t";
-        ilpfile << model.get(GRB_DoubleAttr_Runtime) << "\t";
-        ilpfile << model.get(GRB_DoubleAttr_MIPGap) << "\t";
-        ilpfile << icount << "\t";
+        ilpfile << encode_time(time) << ",";
+        ilpfile << model.get(GRB_DoubleAttr_ObjVal) << ",";
+        ilpfile << model.get(GRB_DoubleAttr_Runtime) << ",";
+        ilpfile << model.get(GRB_DoubleAttr_MIPGap) << ",";
+        ilpfile << icount << ",";
         ilpfile << model.get(GRB_IntAttr_Status) << endl;
     }
     

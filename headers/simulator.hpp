@@ -40,7 +40,8 @@ void simulate_vehicles(std::vector<Vehicle> & vehicles,
         Network const & network, 
         int time,
         Threads & threads,
-        bool ignore_trip_route);
+        bool ignore_trip_route,
+        int travel_interval);
 }
 
 #endif /* SIMULATOR_HPP */

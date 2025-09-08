@@ -82,7 +82,7 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
             {
                 Trip trip = linear_assignment.at(v);
                 prev_trip_cost = trip.cost;
-                if (trip.requests.size() == 0 && trip.cost != 0)
+                if ((trip.requests.size() == 0 && v->passengers.size() == 0) && trip.cost != 0)
                     cout << "Non-zero empty trip. vid: " << v->id << " trip cost: " << prev_trip_cost << endl;
                 prev_cost += trip.cost;
                 for (Request* request : trip.requests)
@@ -332,10 +332,16 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
     cout << "GUROBI_TIME_LIMIT: " << time_limit << endl;
     int old_sol_limit = model.get(GRB_IntParam_SolutionLimit);
     model.set(GRB_IntParam_Threads, 128);
-    model.set(GRB_IntParam_MIPFocus, 1);
-    model.set(GRB_IntParam_Presolve, 0);
+    if (linear_assignment.size()) 
+    {
+        model.set(GRB_IntParam_MIPFocus, 2);
+    } else {
+        model.set(GRB_IntParam_MIPFocus, 1);
+    }
+    model.set(GRB_IntParam_Presolve, 1);
+    // model.set(GRB_DoubleParam_Heuristics, 0.5);
     // model.set(GRB_IntParam_SolutionLimit, 1);
-    model.set(GRB_DoubleParam_MIPGap, 1e-2);
+    model.set(GRB_DoubleParam_MIPGap, 2e-2);
     // model.set(GRB_DoubleParam_NoRelHeurTime, 10.0);
     // model.set(GRB_IntParam_Method, 1);
     model.set(GRB_DoubleParam_TimeLimit, time_limit);

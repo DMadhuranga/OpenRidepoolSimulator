@@ -73,7 +73,9 @@ int main(int argc, char *argv[])
         results << "LINEAR_ASSIGNMENT " << LINEAR_ASSIGNMENT << endl;
         results << "PRUNING_RV_K " << PRUNING_RV_K << endl;
         results << "PRUNING_RR_K " << PRUNING_RR_K << endl;
+        results << "FIX_ASSIGNMENT_BEFORE " << FIX_ASSIGNMENT_BEFORE << endl;
         results << "RTV_TIMELIMIT " << RTV_TIMELIMIT << endl;
+        results << "MAX_REQ_PER_ITER" << MAX_REQ_PER_ITER << endl;
         results << "ALGORITHM ";
         switch (ALGORITHM)
         {
@@ -164,20 +166,25 @@ int main(int argc, char *argv[])
     info("Starting iterations!", Cyan);
     clock_simulation_start = std::chrono::high_resolution_clock::now();
     int time = decode_time(INITIAL_TIME) - INTERVAL;
+    int travel_interval = INTERVAL;
     map<Vehicle*, Trip> prev_assignment;
     while(time < decode_time(FINAL_TIME) - INTERVAL)  // Each loop is a simulation of a time step.
     {
-        time += INTERVAL; // Increment simulation clock.
+        pair<vector<Request*>,int> batch = buffer::get_new_requests(requests, leg_requests, time);
+        travel_interval = batch.second - time;
+        info("Travel interval :" + to_string(travel_interval), Purple);
+        time = batch.second;
         info("Updated simulation clock to :" + to_string(encode_time(time)) +
                  "\tSystem time " + current_time(), Purple);
 
         clock_iteration_start = std::chrono::high_resolution_clock::now();
         clock_start = std::chrono::high_resolution_clock::now();
-
+        
         // Get the set of active vehicles and new requests for this iteration.
         info("Running buffer update", Yellow);
         vector<Vehicle*> active_vehicles = buffer::get_active_vehicles(vehicles, time);
-        vector<Request*> new_requests = buffer::get_new_requests(requests, leg_requests, time);
+        vector<Request*> new_requests = batch.first;
+        info("Number of new requests: " + to_string(new_requests.size()) , Yellow);
 
         // Adding new requests.
         for (auto r : new_requests)
@@ -213,8 +220,19 @@ int main(int argc, char *argv[])
         for (auto & v : vehicles)
             if (assigned_trips.count(&v) && v.passengers.size() == 0 && assigned_trips[&v].requests.size() == 0)
                 blank_trips.insert(&v);
-        for (auto v : blank_trips)
-            assigned_trips.erase(v);
+        {
+            ofstream empty_veh_file(RESULTS_DIRECTORY + "/unassigned_vehicles.log", std::ios_base::app);
+            empty_veh_file << "TIME STAMP:" << encode_time(time) << endl;
+            for (auto v : blank_trips)
+            {
+                assigned_trips.erase(v);
+                if (v->passengers.size() == 0)
+                {
+                    empty_veh_file << v->id << "\t";
+                }
+            }
+            empty_veh_file << endl;
+        }
 
         // recording assignments
         {
@@ -265,8 +283,11 @@ int main(int argc, char *argv[])
         max_assignment_time = max(max_assignment_time, duration_assignment_process);
 
         // Perform the simulation.
-        info("Vehicle simulation started", Yellow);
-        simulator::simulate_vehicles(vehicles, assigned_trips, network, time, threads, ignore_trip_route);
+        info("Vehicle simulation started: "+to_string(time), Yellow);
+        pair<vector<Request*>,int> next_batch = buffer::get_new_requests(requests, leg_requests, time);
+        travel_interval = next_batch.second - time;
+        info("Travel interval for simulation :" + to_string(travel_interval), Purple);
+        simulator::simulate_vehicles(vehicles, assigned_trips, network, time, threads, ignore_trip_route, travel_interval);
 
         clock_stop = std::chrono::high_resolution_clock::now();
         double duration_simulation = 0.000001 * duration_cast<microseconds>(clock_stop - clock_start).count();

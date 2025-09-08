@@ -294,7 +294,7 @@ void make_rvgraph(void* rv_data)
             if (raw_path.first >=0 )
             {
                 compatible_vehicles.push_back(v);
-                if (PRUNING_RV_K > 0 && ++count >= PRUNING_RV_K) break;
+                if (PRUNING_RV_K > 0 && ++count >= PRUNING_RV_K && r->assigned) break;
             }
         }
         

@@ -102,16 +102,18 @@ void make_rtvgraph(void* rtv_data)
         
         round.push_back(vector<Trip>());
         initial_pairing.insert(v->pending_requests.begin(), v->pending_requests.end());
-        mtx.lock();
         if (initial_pairing.size() > (*vr_edges)[v].size())
-            cout << "Added "; 
+        {
+            outputs << "Added "; 
             for (auto r : initial_pairing)
             {
-                if (find((*vr_edges)[v].begin(), (*vr_edges)[v].end(), r) == (*vr_edges)[v].end())
-                    cout << r->id << ",";
+                if (find((*vr_edges)[v].begin(), (*vr_edges)[v].end(), r) == (*vr_edges)[v].end()) 
+                {
+                    outputs << r->id << ",";
+                }
             }
-            cout << " reqs to vid" << v->id << endl;
-        mtx.unlock();
+            outputs << " reqs to vid " << v->id << endl;
+        }
         for (auto r : initial_pairing)
         {
             vector<Request*> requests {r};
@@ -369,8 +371,13 @@ void make_rtvgraph(void* rtv_data)
             potential_trip_list.insert(potential_trip_list.end(), list.begin(), list.end());
         
         for (auto & t : potential_trip_list)
-            if (t.cost == -1)
-                throw runtime_error("Negative cost not cleaned up.");
+            if (t.cost == -1) {
+                string reqs = "";
+                for (auto r: t.requests) {
+                    reqs = reqs + to_string(r->id) + "\t";
+                }
+                throw runtime_error("Negative cost not cleaned up for vid " + to_string(v->id) + " requests " + reqs);
+            }
 
         // Include possibility of previous assignment.
         if (v->order_record.size())
@@ -387,7 +394,7 @@ void make_rtvgraph(void* rtv_data)
         (*trip_list)[v] = potential_trip_list;
         mtx.unlock();
 
-        // outputs << "Ended RTV for vid " << v->id << endl;
+        outputs << "Ended RTV for vid " << v->id << endl;
         // mtx.lock();
         // {
         //     ofstream debuglogfile (RESULTS_DIRECTORY + "/debug.log", std::ios_base::app);
@@ -406,6 +413,7 @@ struct rv_thread_data
     Network const* network;
     vector<Request*> const* requests;
     vector<Vehicle*> const* vehicles;
+    set<int> const* fixed_requests;
 };
 
 
@@ -421,7 +429,19 @@ void make_rvgraph(void* rv_data)
     auto network = data->network;
     auto requests = data->requests;
     auto vehicles = data->vehicles;
+    auto fixed_requests = data->fixed_requests;
     
+    // calculate vehicle current travel cost
+    std::map<const Vehicle*,double> current_vehicle_cost;
+    auto start_time = chrono::steady_clock::now();
+    for (Vehicle* v : *vehicles)
+    {
+        Trip baseline {};
+        vector<Request*> rs;
+        auto result = routeplanner::time_travel(*v, rs, STANDARD, *network, time, start_time);
+        current_vehicle_cost[v] = result.first;
+    }
+
     for (int i = start; i < end; i++)
     {
         Request* r = (*requests)[i];
@@ -456,7 +476,6 @@ void make_rvgraph(void* rv_data)
                 if (raw_path.first >=0 )
                 {
                     compatible_vehicles.push_back(v);
-                    // if (PRUNING_RV_K > 0 && ++count >= PRUNING_RV_K) break;
                 }
             }
         } else {
@@ -469,8 +488,20 @@ void make_rvgraph(void* rv_data)
                 if (raw_path.first >=0 )
                 {
                     compatible_vehicles.push_back(v);
-                    cost_ratio[v] = (double)raw_path.first/(r->ideal_traveltime);
-                    if (PRUNING_RV_K > 0 && ++count >= PRUNING_RV_K/2 && time_to_pickup <= 300) break;
+                    cost_ratio[v] = (double)(raw_path.first-current_vehicle_cost[v])/(r->ideal_traveltime);
+                    set<Request*> previous_assigned_passengers (v->pending_requests.begin(), v->pending_requests.end());
+                    if (previous_assigned_passengers.find(r) != previous_assigned_passengers.end()) {
+                        cost_ratio[v] = 0;
+                        if (fixed_requests->count(r->id)) {
+                            // remove all other vehicles from compatible_vehicles
+                            compatible_vehicles.clear();
+                            compatible_vehicles.push_back(v);
+                            break;
+                        }
+                    }
+                    if (!ALLOW_MULTI_MODAL && PRUNING_RV_K > 0 && ++count >= PRUNING_RV_K) break;
+                    // if (PRUNING_RV_K > 0 && ++count >= PRUNING_RV_K/3 && time_to_pickup <= 600) break;
+                    // if (PRUNING_RV_K > 0 && ++count >= PRUNING_RV_K/2 && time_to_pickup <= 300) break;
                 }
             }
 
@@ -621,11 +652,39 @@ std::map<Vehicle*, Trip> assignment(
         Threads & threads)
 {
     info("Building R-V edges of RV graph", Yellow);
+
+    // Get previously assigned requests
+    vector<int> prev_assigned_requests;
+    std::map<int, double> time_to_pickup;
+    for (auto v : vehicles) {
+        for (auto r : v->pending_requests) {
+            prev_assigned_requests.push_back(r->id);
+            time_to_pickup[r->id] = network.get_vehicle_time(*v, r->origin);
+        }
+    }
+
+    // Sort previously assigned requests by time to pickup.
+    auto sort_lambda = [&time_to_pickup](int a, int b) -> bool
+    {
+        double avalue = time_to_pickup[a];
+        double bvalue = time_to_pickup[b];
+        return avalue < bvalue;
+    };
+    sort(prev_assigned_requests.begin(), prev_assigned_requests.end(), sort_lambda);
+
+    // Pick first 20% requests from prev_assigned_requests
+    size_t fixed_count = 0; //static_cast<size_t>(0.1 * prev_assigned_requests.size());
+    // set<int> fixed_requests(prev_assigned_requests.begin(), prev_assigned_requests.begin() + fixed_count);
+    set<int> fixed_requests;
+    for (int r_id: prev_assigned_requests) {
+        if (time_to_pickup[r_id] <= FIX_ASSIGNMENT_BEFORE) fixed_requests.insert(r_id); // Fix the requests close to being picked
+    }
+
     int vr_edge_cnt = 0;
     map<Vehicle*, vector<Request*>> vr_edges;  // RV edges indexed by vehicle id.
     {
         map<Request*, vector<Vehicle*>> rv_edges;
-        struct rv_thread_data rv_data {time, &rv_edges, &network, &requests, &vehicles};
+        struct rv_thread_data rv_data {time, &rv_edges, &network, &requests, &vehicles, &fixed_requests};
         threads.auto_thread(requests.size(), make_rvgraph, (void*) &rv_data);
         
         for (auto x : rv_edges) // Invert the graph.
@@ -735,7 +794,7 @@ std::map<Vehicle*, Trip> assignment(
         for (auto r : requests)
             if (r->assigned && !rs.count(r))
                 if (!ps.count(r))
-                    throw runtime_error("Help!  I was not included!");
+                    throw runtime_error("Help!  I was not included! " + to_string(r->id));
                 else
                 {
                     cout << r << " with id " << r->id << " on " << ps[r] << endl;
@@ -802,15 +861,16 @@ std::map<Vehicle*, Trip> assignment(
             }
             assignment_file << endl;
         }
+        empty_assignment = linear_assignment;
     }
 
     try { 
-        assignment = ilp_common_gurobi::ilp_assignment_gurobi(trip_list, requests, time, time_limit, linear_assignment);
+        assignment = ilp_common_gurobi::ilp_assignment_gurobi(trip_list, requests, time, time_limit, empty_assignment);
     } catch (GRBException e) {
         cout << "GRBException ocurred" << endl;
         cout << "Error code = " << e.getErrorCode() << endl;
         cout << e.getMessage() << endl;
-        assignment = linear_assignment;
+        assignment = empty_assignment;
     }
 
     {

@@ -27,6 +27,7 @@
 #include "settings.hpp"
 
 #include <set>
+#include <map>
 
 #define MAX_STAY_TIME 24 //24 hours
 using namespace std;
@@ -40,21 +41,36 @@ vector<Vehicle*> buffer::get_active_vehicles(vector<Vehicle> & vehicles, int tim
     return buffer;
 }
 
-vector<Request*> buffer::get_new_requests(vector<Request> & requests, vector<Request> & leg_requests, int time)
+pair<vector<Request*>, int> buffer::get_new_requests(vector<Request> & requests, vector<Request> & leg_requests, int time)
 {
-    vector<Request*> buffer;
-
+    multimap<int,Request*> entry_times;
     for (auto & r : requests)
     {
         if (r.entry_time <= time && time < r.entry_time + INTERVAL) // If already entered, but not too long ago.
         {
-            buffer.push_back(&r);
-            for (auto & l_r : leg_requests)
-                if (l_r.original_req_id == r.id) // If already entered, but not too long ago.
-                    buffer.push_back(&l_r);
+            entry_times.insert(make_pair(r.entry_time, &r));
         }
     }
+    vector<Request*> buffer;
 
-    return buffer;
+    int count = 0;
+    int last_entry_time = time;
+    for (auto &x : entry_times)
+    {
+        Request* r = x.second;
+        count ++;
+        buffer.push_back(r);
+        for (auto & l_r : leg_requests)
+            if (l_r.original_req_id == r->id) // If already entered, but not too long ago.
+                buffer.push_back(&l_r);
+        if (count >= MAX_REQ_PER_ITER && last_entry_time < r->entry_time) break;
+        last_entry_time = r->entry_time;
+    }
+    last_entry_time += INTERVAL;
+    info("Count of new requests: "+ to_string(count), Purple);
+    info("last_entry_time: "+ to_string(last_entry_time), Purple);
+    if (count < MAX_REQ_PER_ITER) last_entry_time = time + INTERVAL;
+
+    return make_pair(buffer, last_entry_time);
 }
 

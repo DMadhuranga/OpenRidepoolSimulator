@@ -10,6 +10,8 @@
 #define SIMULATOR_VERBOSE false
 #define PRUNING_RV_K 30 // 30 // 0 // 30        // Heuristic that only connects requests with nearest k vehicles.
 #define PRUNING_RR_K 0 //10    // Heuristic that only connects requests with nearest k requests.
+#define FIX_ASSIGNMENT_BEFORE 0 //10    // Heuristic that fixes vehicle assigment within # seconds of picking up.
+#define MAX_REQ_PER_ITER 500
 
 enum Algorithm {ILP_FULL};
 enum Ctsp {FULL, FIX_ONBOARD, FIX_PREFIX, MEGA_TSP};

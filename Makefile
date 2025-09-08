@@ -17,7 +17,7 @@ endif
 # Works only for linux and MacOS for now. TODO: Add windows support.
 ifeq (${UNAME_S},Linux)
 	LDFLAGS := -L${GUROBI_HOME}/lib \
-                        -lgurobi_c++ -lgurobi110 -lm
+                        -lgurobi_c++ -lgurobi110 -lm -pthread
 endif
 ifeq (${UNAME_S},Darwin)
 	LDFLAGS := -L${MSKHOME}/mosek/8/tools/platform/osx64x86/bin \

@@ -43,13 +43,13 @@ namespace simulator
 mutex mtx;
 
 /* Special case when a vehicle is finishing moving towards a goal with no riders. */
-void move_jobless_vehicle(Vehicle & v, Network const & network, int time)
+void move_jobless_vehicle(Vehicle & v, Network const & network, int time, int interval)
 {
     int origin = v.prev_node;
     int destination = v.node;
     stringstream actions;
     
-    if (v.offset <= INTERVAL)
+    if (v.offset <= interval)
     {
         actions << v.id << "," << encode_time(time + v.offset)
                 << "," << destination << "," << endl;
@@ -59,7 +59,7 @@ void move_jobless_vehicle(Vehicle & v, Network const & network, int time)
         v.offset = 0;
     }
     else
-        v.offset -= INTERVAL;
+        v.offset -= interval;
     
     mtx.lock();
     {
@@ -73,7 +73,7 @@ void move_jobless_vehicle(Vehicle & v, Network const & network, int time)
 
 
 /* For vehicles given new assignments. */
-void move_vehicle(Vehicle & vehicle, Trip const & trip, Network const & network, int time, bool ignore_trip_route)
+void move_vehicle(Vehicle & vehicle, Trip const & trip, Network const & network, int time, bool ignore_trip_route, int interval)
 {
     vector<Request*> newRequests = trip.requests;
     set<Request*> pending_requests (newRequests.begin(), newRequests.end());
@@ -108,6 +108,10 @@ void move_vehicle(Vehicle & vehicle, Trip const & trip, Network const & network,
 
     bool rebalancing = trip.is_fake;
     stringstream actions;
+    // actions << "TimeStamp" << time << endl;
+    // actions << "Interval" << interval << endl;
+    // actions << "Offset" << vehicle.offset << endl;
+    // actions << "Node" << vehicle.node << endl;
 
     // for (NodeStop n : vehicle.order_record)
     // {
@@ -127,7 +131,7 @@ void move_vehicle(Vehicle & vehicle, Trip const & trip, Network const & network,
     }
 
     bool interrupted = false;
-    int traveltime_left = INTERVAL;
+    int traveltime_left = interval;
     int current_time = time;
     int jobs_completed = 0;
     
@@ -354,7 +358,7 @@ void move_vehicle(Vehicle & vehicle, Trip const & trip, Network const & network,
 }
 
 
-void simulate_vehicle(Vehicle & vehicle, map<Vehicle*, Trip> & assignments, Network const & network, int time, bool ignore_trip_route)
+void simulate_vehicle(Vehicle & vehicle, map<Vehicle*, Trip> & assignments, Network const & network, int time, bool ignore_trip_route, int interval)
 {
     // Prepare simulation.
     vehicle.just_boarded.clear();
@@ -367,9 +371,9 @@ void simulate_vehicle(Vehicle & vehicle, map<Vehicle*, Trip> & assignments, Netw
     
     // Dispatch by job type.
     if (t.requests.size() || vehicle.passengers.size())
-        move_vehicle(vehicle, t, network, time, ignore_trip_route);
+        move_vehicle(vehicle, t, network, time, ignore_trip_route, interval);
     else if (vehicle.offset)
-        move_jobless_vehicle(vehicle, network, time);
+        move_jobless_vehicle(vehicle, network, time, interval);
     else
         vehicle.order_record.clear();
 }
@@ -382,6 +386,7 @@ struct simulation_obj
     Network const* network;
     vector<Vehicle>* vehicles;
     bool ignore_trip_route;
+    int travel_interval;
 };
 
 
@@ -398,9 +403,10 @@ void simulate_dispatch(void* simulation_data)
     auto network = data->network;
     auto vehicles = data->vehicles;
     auto ignore_trip_route = data->ignore_trip_route;
+    auto travel_interval = data->travel_interval;
     
     for (auto i = start; i < end; i++)
-        simulate_vehicle((*vehicles)[i], *assignments, *network, time, ignore_trip_route);
+        simulate_vehicle((*vehicles)[i], *assignments, *network, time, ignore_trip_route, travel_interval);
 }
 
 
@@ -409,7 +415,8 @@ void simulate_vehicles(vector<Vehicle> & vehicles,
         Network const & network, 
         int time,
         Threads & threads,
-        bool ignore_trip_route)
+        bool ignore_trip_route,
+        int travel_interval)
 {
     if (SIMULATOR_VERBOSE)
     {
@@ -417,7 +424,7 @@ void simulate_vehicles(vector<Vehicle> & vehicles,
         joblogfile << "TIME " << encode_time(time) << endl;
     }
     
-    struct simulation_obj data {time, &assignments, &network, &vehicles, ignore_trip_route};
+    struct simulation_obj data {time, &assignments, &network, &vehicles, ignore_trip_route, travel_interval};
     threads.auto_thread(vehicles.size(), simulate_dispatch, (void*) &data);
 }
 

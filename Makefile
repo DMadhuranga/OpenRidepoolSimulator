@@ -6,10 +6,10 @@ CXXFLAGS := -std=c++11 -g
 # These are the locations to look for headers called from the .cpp files 
 # Works only on linux and MacOS for now. TODO: Add windows support.
 ifeq (${UNAME_S},Linux)
-	INCLUDE := -Iheaders -I${GUROBI_HOME}/include/ -Ithreadpool
+	INCLUDE := -Iheaders -I${GUROBI_HOME}/include/ -Ithreadpool -Icnpy
 endif
 ifeq (${UNAME_S},Darwin)
-	INCLUDE := -Iheaders -I${GUROBI_HOME}/ -Ithreadpool
+	INCLUDE := -Iheaders -I${GUROBI_HOME}/ -Ithreadpool -Icnpy
 endif
 
 
@@ -17,11 +17,11 @@ endif
 # Works only for linux and MacOS for now. TODO: Add windows support.
 ifeq (${UNAME_S},Linux)
 	LDFLAGS := -L${GUROBI_HOME}/lib \
-                        -lgurobi_c++ -lgurobi110 -lm -pthread
+                        -lgurobi_c++ -lgurobi110 -lm -pthread -lz
 endif
 ifeq (${UNAME_S},Darwin)
 	LDFLAGS := -L${MSKHOME}/mosek/8/tools/platform/osx64x86/bin \
-			-pthread -lfusion64 -lmosek64 
+			-pthread -lfusion64 -lmosek64 -lz
 endif
 
 # LDFLAGSG := -L${GUROBI_HOME}/lib \
@@ -33,7 +33,7 @@ DEPDIR := .deps
 DEPFLAGS = -MT $@ -MMD -MP -MF $(DEPDIR)/$*.d
 
 # Define source code to be every .cpp file in the src/ directory.
-SRC := $(wildcard src/*.cpp) $(wildcard src/algorithms/*.cpp)
+SRC := $(wildcard src/*.cpp) $(wildcard src/algorithms/*.cpp) cnpy/cnpy.cpp
 
 # Define object files to be the .o equivalent of every .cpp source file.  Similar for dependency files.
 OBJ := $(SRC:%.cpp=build/%.o)

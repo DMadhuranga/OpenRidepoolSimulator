@@ -67,7 +67,9 @@ int main(int argc, char *argv[])
         results << "VEHICLE_DATA_FILE " << VEHICLE_DATA_FILE << endl;
         results << "CARSIZE " << CARSIZE << endl;
         results << "GUROBI_TIME_LIMIT " << GUROBI_TIME_LIMIT << endl;
+        results << "DEMAND_PENALTY_C " << DEMAND_PENALTY_C << endl;
         results << "ALLOW_MULTI_MODAL " << ALLOW_MULTI_MODAL << endl;
+        results << "ONLY_ALLOW_SINGLE_LEG " << ONLY_ALLOW_SINGLE_LEG << endl;
         results << "INITIAL_TIME " << INITIAL_TIME << endl;
         results << "FINAL_TIME " << FINAL_TIME << endl;
         results << "LINEAR_ASSIGNMENT " << LINEAR_ASSIGNMENT << endl;
@@ -168,6 +170,7 @@ int main(int argc, char *argv[])
     int time = decode_time(INITIAL_TIME) - INTERVAL;
     int travel_interval = INTERVAL;
     map<Vehicle*, Trip> prev_assignment;
+    std::map<Vehicle*, std::vector<Trip>> prev_trip_list;
     while(time < decode_time(FINAL_TIME) - INTERVAL)  // Each loop is a simulation of a time step.
     {
         pair<vector<Request*>,int> batch = buffer::get_new_requests(requests, leg_requests, time);
@@ -204,8 +207,11 @@ int main(int argc, char *argv[])
         map<Vehicle*, Trip> assigned_trips;
         bool ignore_trip_route = false;
         
-        assigned_trips = generator::trip_assignment(active_vehicles,
-                active_requests, time, network, threads);
+        struct generator::assignment_result ass_results = generator::trip_assignment(active_vehicles,
+                active_requests, prev_trip_list, time, network, threads);
+
+        assigned_trips = ass_results.assignment;
+        prev_trip_list = ass_results.trip_list;
         // try { 
         // } catch (GRBException e) {
         //     assigned_trips = prev_assignment;

@@ -25,6 +25,7 @@
 #include "network.hpp"
 #include "settings.hpp"
 
+#include "cnpy.h"
 #include <iostream>
 #include <fstream>
 #include <map>
@@ -40,58 +41,22 @@ using namespace boost;
  
 Network::Network()
 {  
+    // --- READ TRAVEL TIME MATRIX (.npy) ---
+    const string time_matrix_path = DATAROOT + "/map/" + TIMEFILE_NPY;
+    cnpy::NpyArray time_arr = cnpy::npy_load(time_matrix_path);
+    if (time_arr.shape.size() != 2)
+        throw runtime_error("Expected 2D npy array for time matrix.");
+
+    const size_t rows = time_arr.shape[0];
+    const size_t cols = time_arr.shape[1];
+    const uint16_t* time_data = time_arr.data<uint16_t>();
+
+    time_matrix.resize(rows, vector<int>(cols));
+    for (size_t i = 0; i < rows; ++i)
+        for (size_t j = 0; j < cols; ++j)
+            time_matrix[i][j] = 2 * static_cast<int>(time_data[i * cols + j]);
+
     string line;
-    ifstream timefile(DATAROOT + "/map/" + TIMEFILE);
-    if (!timefile.is_open())
-        throw runtime_error("Unable to open matrix file");
-    
-    int rowsize = 0;
-    while (getline(timefile, line))
-    {
-        vector<int> row;
-        row.reserve(rowsize);
-        
-        char * cstr = new char [line.length() + 1];
-        std::strcpy(cstr, line.c_str());
-        
-        char* token;
-        token = strtok(cstr, ",");
-        while (token != NULL)
-        {
-            int entry_value = stoi(token);
-            row.push_back(entry_value);
-            token = strtok(NULL, ",");
-        }
-        delete[] cstr;
-        time_matrix.push_back(row);
-    }
-    
-    // WE ARE NOT USING DISTANCE HERE YET, SO JUST DUPLICATING TIME.
-    //ifstream distancefile(DATAROOT + "/map/times.csv"); // full_distances.csv");
-    ifstream distancefile(DATAROOT + "/map/" + TIMEFILE);
-    if (!distancefile.is_open())
-        throw runtime_error("Unable to open distances matrix file.");
-    
-    while (getline(distancefile, line))
-    {
-        vector<int> row;
-        row.reserve(rowsize);
-        
-        char * cstr = new char [line.length() + 1];
-        std::strcpy(cstr, line.c_str());
-        
-        char* token;
-        token = strtok(cstr, ",");
-        while (token != NULL)
-        {
-            int entry_value = stoi(token);
-            row.push_back(entry_value);
-            token = strtok(NULL, ",");
-        }
-        delete[] cstr;
-        distance_matrix.push_back(row);
-    }
-    
     ifstream edgefile(DATAROOT + "/map/" + EDGECOST_FILE);
     if (edgefile.is_open())
     {
@@ -99,9 +64,9 @@ Network::Network()
         {
             vector<string> fields;
             split(fields, line, is_any_of(","));
-            int origin = stoi(fields[0]) - 2;
-            int dest = stoi(fields[1]) - 2;
-            int length = stoi(fields[2]);
+            int origin = stoi(fields[0]) - 1;
+            int dest = stoi(fields[1]) - 1;
+            int length = 2*stoi(fields[2]);
             
             if (adjacency_list.size() < origin + 1)
                 adjacency_list.resize(origin + 1);
@@ -138,7 +103,7 @@ int Network::get_distance(int node_one, int node_two) const
         cout << "Negative index given to get_distance!  Network Line " << __LINE__ << endl;
         getchar();
     }
-    return distance_matrix[node_one][node_two];
+    return time_matrix[node_one][node_two];
 }
 
 /* Specifically, this gets the distance offset. */

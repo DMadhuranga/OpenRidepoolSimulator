@@ -11,9 +11,25 @@ The design allows flexibility to control:
 * Insert you own CTSP subproblem heuristic
 * Easily change parameters for RTV graph generation
 
-The software is tested on linux with G++ compiler.  Optimization is written with Mosek Optimizer version 8.1.0.56 and may not be compatible with later or current versions of the Mosek.
+The software is tested on Linux with the G++ compiler.
 
-To compile the program, simply enter the directory and run the "make" command.
+## Dependencies
+
+- [Gurobi](https://www.gurobi.com/) optimizer (set the `GUROBI_HOME` environment variable to your Gurobi installation directory)
+- [Boost](https://www.boost.org/) C++ libraries
+
+## Compiling
+
+```bash
+export GUROBI_HOME=/path/to/gurobi  # e.g. /opt/gurobi1100/linux64
+make
+```
+
+This produces the `./prog` binary. To remove build artifacts:
+
+```bash
+make clean
+```
 
 To run the simulator, in the console enter
 
@@ -58,3 +74,6 @@ They keywords include (more listed in file settings.cpp):
 * RTV_TIMELIMIT - (default 0) number of miliseconds the RTV graph generator can spend on each vehicle
 
 This software was produced by Matthew Zalesak and Vindula Jayawardana.
+
+
+# salloc --cpus-per-task=4 --mem=16g --time=4:00:00 --partition=samitha

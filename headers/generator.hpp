@@ -37,9 +37,16 @@
 
 namespace generator
 {
-std::map<Vehicle*, Trip> trip_assignment(
+struct assignment_result
+{
+        std::map<Vehicle*, std::vector<Trip>> trip_list;
+        std::map<Vehicle*, Trip> assignment;
+};
+
+assignment_result trip_assignment(
         std::vector<Vehicle*> const & active_vehicles,
         std::vector<Request*> const & active_requests,
+        std::map<Vehicle*, std::vector<Trip>> prev_trip_list,
         int time,
         Network const & network,
         Threads & threads);

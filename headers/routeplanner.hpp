@@ -44,6 +44,8 @@ std::pair<int,std::vector<NodeStop>> travel(Vehicle const & vehicle, std::vector
         Purpose trigger, Network const & network, int time);
 std::pair<int,std::vector<NodeStop>> time_travel(Vehicle const & vehicle, std::vector<Request*> const & requests,
         Purpose trigger, Network const & network, int time, std::chrono::steady_clock::time_point t);
+bool check_order_record_feasibility(Vehicle const & vehicle, std::vector<NodeStop> const & order_record,
+        Network const & network, int time);
 
 }
 

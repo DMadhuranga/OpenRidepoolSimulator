@@ -9,9 +9,10 @@
 #define OPTIMIZER_VERBOSE true
 #define SIMULATOR_VERBOSE false
 #define PRUNING_RV_K 30 // 30 // 0 // 30        // Heuristic that only connects requests with nearest k vehicles.
-#define PRUNING_RR_K 0 //10    // Heuristic that only connects requests with nearest k requests.
-#define FIX_ASSIGNMENT_BEFORE 0 //10    // Heuristic that fixes vehicle assigment within # seconds of picking up.
+#define PRUNING_RR_K 30 //10    // Heuristic that only connects requests with nearest k requests.
+#define FIX_ASSIGNMENT_BEFORE 300 //10    // Heuristic that fixes vehicle assigment within # seconds of picking up.
 #define MAX_REQ_PER_ITER 500
+#define SKIP_FRESH_PAX_THRESHOLD 4  // When assigned+on-board >= this, skip fresh trip generation and only build on validated_trip_cache
 
 enum Algorithm {ILP_FULL};
 enum Ctsp {FULL, FIX_ONBOARD, FIX_PREFIX, MEGA_TSP};
@@ -42,13 +43,16 @@ extern std::string LEG_REQUEST_DATA_FILE;
 extern std::string RESULTS_DIRECTORY;
 extern int RTV_TIMELIMIT;
 extern double GUROBI_TIME_LIMIT;
+extern double DEMAND_PENALTY_C; // Scaling constant c; miss_penalty = c * avg_travel_duration
 extern std::string TIMEFILE;
+extern std::string TIMEFILE_NPY;
 extern std::string VEHICLE_DATA_FILE;
 extern int VEHICLE_LIMIT;
 extern bool LINEAR_ASSIGNMENT;
 extern bool DISABLE_DIRECT_TRIPS;
 extern bool DISABLE_REASSIGNMENT;
 extern bool PRE_SOLVE_ILP;
+extern bool ONLY_ALLOW_SINGLE_LEG;
 
 void initialize(int argc, char** argv);
 

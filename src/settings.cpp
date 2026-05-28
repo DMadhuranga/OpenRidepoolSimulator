@@ -57,13 +57,16 @@ string LEG_REQUEST_DATA_FILE = "leg_requests.csv";
 string RESULTS_DIRECTORY = "results";
 int RTV_TIMELIMIT = 0;
 double GUROBI_TIME_LIMIT = 90;
+double DEMAND_PENALTY_C = 1;
 string TIMEFILE = "times.csv";
+string TIMEFILE_NPY = "times.npy";
 string VEHICLE_DATA_FILE = "vehicles.csv";
 int VEHICLE_LIMIT = 1000; // 0;
 bool LINEAR_ASSIGNMENT = false;
 bool DISABLE_DIRECT_TRIPS = false;
 bool DISABLE_REASSIGNMENT = false;
 bool PRE_SOLVE_ILP = false;
+bool ONLY_ALLOW_SINGLE_LEG = false;
 
 map<string,Algorithm> algorithm_index {
     {"ILP_FULL", ILP_FULL}};
@@ -221,12 +224,27 @@ void initialize(int argc, char** argv)
                 throw runtime_error("Argument could not be converted into a boolean.");
             }
         }
+        else if (key == "ONLY_ALLOW_SINGLE_LEG")
+        {
+            string s = boost::algorithm::to_lower_copy(value);
+            if (s == "true")
+                ONLY_ALLOW_SINGLE_LEG = true;
+            else if (s == "false")
+                ONLY_ALLOW_SINGLE_LEG = false;
+            else
+            {
+                cout << "For " << key << " trying to interpret \"" << value << "\"." << endl;
+                throw runtime_error("Argument could not be converted into a boolean.");
+            }
+        }
         else if (key == "INTERVAL")
             INTERVAL = stoi(value);
         else if (key == "RTV_TIMELIMIT")
             RTV_TIMELIMIT = stoi(value);
         else if (key == "GRB_TIME_LIMIT")
             GUROBI_TIME_LIMIT = stod(value);
+        else if (key == "DEMAND_PENALTY_C")
+            DEMAND_PENALTY_C = stod(value);
         else if (key == "DWELL_PICKUP")
             DWELL_PICKUP = stoi(value);
         else if (key == "DWELL_ALIGHT")

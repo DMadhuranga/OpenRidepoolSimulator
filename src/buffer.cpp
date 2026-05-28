@@ -60,9 +60,37 @@ pair<vector<Request*>, int> buffer::get_new_requests(vector<Request> & requests,
         Request* r = x.second;
         count ++;
         buffer.push_back(r);
-        for (auto & l_r : leg_requests)
-            if (l_r.original_req_id == r->id) // If already entered, but not too long ago.
-                buffer.push_back(&l_r);
+
+        // Group leg_requests for this original request by bus_trip_id.
+        // When ONLY_ALLOW_SINGLE_LEG is true, skip any bus_trip_id group that
+        // has both a first-leg (leg_type=0) and a last-leg (leg_type=1).
+        if (ONLY_ALLOW_SINGLE_LEG)
+        {
+            map<int, vector<Request*>> by_trip;
+            for (auto & l_r : leg_requests)
+                if (l_r.original_req_id == r->id)
+                    by_trip[l_r.bus_trip_id].push_back(&l_r);
+
+            for (auto & kv : by_trip)
+            {
+                bool has_first = false, has_last = false;
+                for (auto * lr : kv.second)
+                {
+                    if (lr->leg_type == 0) has_first = true;
+                    if (lr->leg_type == 1) has_last  = true;
+                }
+                if (has_first && has_last)
+                    continue; // skip combined pair
+                for (auto * lr : kv.second)
+                    buffer.push_back(lr);
+            }
+        }
+        else
+        {
+            for (auto & l_r : leg_requests)
+                if (l_r.original_req_id == r->id)
+                    buffer.push_back(&l_r);
+        }
         if (count >= MAX_REQ_PER_ITER && last_entry_time < r->entry_time) break;
         last_entry_time = r->entry_time;
     }

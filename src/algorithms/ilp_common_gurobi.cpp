@@ -39,6 +39,7 @@ string itos(int i) {stringstream s; s << i; return s.str(); }
 namespace ilp_common_gurobi
 {
 
+
 /* Function to solve main assignment problem. */
 map<Vehicle*,Trip> ilp_assignment_gurobi(
         map<Vehicle*, vector<Trip>> const & trip_list, vector<Request*> const & requests, int time, double time_limit, map<Vehicle*, Trip> const & linear_assignment)
@@ -61,6 +62,14 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
             K ++;
         }
     }
+
+    // miss_penalty = c * avg travel duration of current requests
+    int epoch_n = 0;
+    double epoch_duration = 0.0;
+    for (Request* r : requests)
+        if (r->original_req_id == -1) { epoch_n++; epoch_duration += r->ideal_traveltime; }
+    double D = (epoch_n > 0) ? epoch_duration / epoch_n : 0.0;
+    double miss_penalty = (D > 0.0) ? DEMAND_PENALTY_C * D : MISS_COST;
     int index = 0;
     vector<double> costs;
     map<int, set<int>> rids_to_trips;  // IRK + ITI
@@ -148,6 +157,10 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
     if (index == 0)
         return {};
 
+    GRBVar* e = nullptr;
+    GRBVar* x = nullptr;
+
+    try {
     // Creating an environment
     GRBEnv env = GRBEnv(true);
     env.set("LogFile", RESULTS_DIRECTORY + "/mip.log");
@@ -156,8 +169,8 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
     // Create an empty model
     GRBModel model = GRBModel(env);
 
-    GRBVar* e = new GRBVar[index];
-    GRBVar* x = new GRBVar[K];
+    e = new GRBVar[index];
+    x = new GRBVar[K];
     for (auto i = 0; i < index; i++)
     {
         e[i] = model.addVar(0.0, 1.0, costs[i], GRB_BINARY, "e_"+itos(i));
@@ -168,13 +181,18 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
             e[i].set(GRB_DoubleAttr_Start, 0.0);
         }
     }
+    {
+        ostringstream msg;
+        msg << "Miss penalty: " << miss_penalty << " (D=" << D << ", n=" << epoch_n << ")";
+        info(msg.str(), Yellow);
+    }
     for (auto i = 0; i < K; i++)
     {
-        x[i] = model.addVar(0.0, 1.0, MISS_COST, GRB_BINARY, "x_"+itos(i));
+        x[i] = model.addVar(0.0, 1.0, miss_penalty, GRB_BINARY, "x_"+itos(i));
         if (initial_sol_x.count(i))
         {
-            initial_cost += MISS_COST;
-            prev_cost += MISS_COST;
+            initial_cost += miss_penalty;
+            prev_cost += miss_penalty;
             x[i].set(GRB_DoubleAttr_Start, 1.0);
         } else {
             x[i].set(GRB_DoubleAttr_Start, 0.0);
@@ -414,8 +432,22 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
         cout << "Initial cost does not match previous cost" << endl;
     }
 
+    // Free dynamically allocated memory
+    delete[] e;
+    delete[] x;
     
     return assigned_trips;
+    
+    } catch (GRBException ex) {
+        cout << "GRBException occurred" << endl;
+        cout << "Error code = " << ex.getErrorCode() << endl;
+        cout << ex.getMessage() << endl;
+        // Free dynamically allocated memory before returning
+        if (e != nullptr) delete[] e;
+        if (x != nullptr) delete[] x;
+        // Return empty assignment map on error
+        return map<Vehicle*, Trip>();
+    }
 }
 
 }

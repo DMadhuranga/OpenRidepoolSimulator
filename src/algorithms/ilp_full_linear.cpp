@@ -411,7 +411,7 @@ void make_rrgraph(void* rr_data)
 }
 
 // PNAS version : Performs sequence of steps, each in parallel, to produce RTV graph and then assignments. 
-std::map<Vehicle*, Trip> assignment(
+generator::assignment_result assignment(
         std::vector<Vehicle*> const & vehicles,
         std::vector<Request*> const & requests,
         int time,
@@ -552,7 +552,8 @@ std::map<Vehicle*, Trip> assignment(
     //     }
     // }
 
-    return assignment;
+    struct generator::assignment_result ass_result {trip_list, assignment};
+    return ass_result;
 }
 
 }

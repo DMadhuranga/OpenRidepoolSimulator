@@ -340,10 +340,6 @@ void move_vehicle(Vehicle & vehicle, Trip const & trip, Network const & network,
             vehicle.order_record.push_back(path[i]);
         
         vehicle.pending_requests = vector<Request*> (pending_requests.begin(), pending_requests.end());
-        // for (Request* r : vehicle.pending_requests)
-        // {
-        //     actions << vehicle.id << ",pending_requests," << r->id << endl;
-        // }
     }
     
     if (rebalancing)  // Temporary state to revert from rebalancing.  Remove when rebalancing fixed.

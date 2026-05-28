@@ -37,16 +37,17 @@ namespace generator
 
 /* Different versions of trip assignment */
 
-std::map<Vehicle*, Trip> trip_assignment(
+assignment_result trip_assignment(
         std::vector<Vehicle*> const & vehicles,
         std::vector<Request*> const & requests,
+        std::map<Vehicle*, std::vector<Trip>> prev_trip_list,
         int time,
         Network const & network,
         Threads & threads)
 {
     if (LINEAR_ASSIGNMENT)
         return ilp_full_linear::assignment(vehicles, requests, time, network, threads);
-    return ilp_full::assignment(vehicles, requests, time, network, threads);
+    return ilp_full::assignment(vehicles, requests, prev_trip_list, time, network, threads);
 }
 
 Trip previoustrip(Vehicle* v, Network const & n, int time)

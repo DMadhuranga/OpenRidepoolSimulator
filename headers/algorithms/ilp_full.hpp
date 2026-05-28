@@ -30,15 +30,17 @@
 #include "threads.hpp"
 #include "trip.hpp"
 #include "vehicle.hpp"
+#include "generator.hpp"
 
 #include <map>
 #include <vector>
 
 namespace ilp_full
 {
-std::map<Vehicle*, Trip> assignment(
+generator::assignment_result assignment(
         std::vector<Vehicle*> const & vehicles,
         std::vector<Request*> const & requests,
+        std::map<Vehicle*, std::vector<Trip>> prev_trip_list,
         int time,
         Network const & network,
         Threads & threads);

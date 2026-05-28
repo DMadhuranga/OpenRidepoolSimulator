@@ -170,6 +170,9 @@ map<Vehicle*,Trip> rebalance_matching_lp(
         count += trips->size();
     }
     
+    // Free dynamically allocated memory
+    delete[] x;
+    
     return rebalancing_trips;
 }
 

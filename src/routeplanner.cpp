@@ -582,4 +582,66 @@ pair<int,vector<NodeStop>> time_travel(Vehicle const & vehicle, vector<Request*>
     return new_time_travel(vehicle, requests, network, time, t);
 }
 
+// Check if a given order_record is still feasible from the vehicle's current position
+bool check_order_record_feasibility(Vehicle const & vehicle, vector<NodeStop> const & order_record,
+        Network const & network, int time)
+{
+    if (order_record.empty()) {
+        return true;
+    }
+    
+    int vehicle_node = vehicle.node;
+    int current_time = time + vehicle.offset;
+    int residual_capacity = vehicle.capacity - vehicle.passengers.size();
+    Action prev_action = NO_ACTION;
+    
+    for (const NodeStop& stop : order_record) {
+        Request* r = stop.r;
+        int new_location = stop.node;
+        
+        // Calculate travel time to this stop
+        int travel_time = network.get_time(vehicle_node, new_location);
+        int arrival_time = current_time + travel_time;
+        
+        // Wait for passenger if needed (pickup only)
+        if (stop.is_pickup && r->entry_time > arrival_time) {
+            arrival_time = r->entry_time;
+        }
+        
+        // Account for dwell time rules (batched boarding/alighting)
+        if (prev_action == DROPOFF && (stop.is_pickup || vehicle_node != new_location)) {
+            arrival_time += DWELL_ALIGHT;
+        } else if (prev_action == PICKUP && (!stop.is_pickup || vehicle_node != new_location)) {
+            arrival_time += DWELL_PICKUP;
+        }
+        
+        // Check capacity constraints
+        if (stop.is_pickup) {
+            residual_capacity--;
+            if (residual_capacity < 0) {
+                return false;  // Exceeds capacity
+            }
+            
+            // Check pickup deadline
+            if (arrival_time > r->latest_boarding) {
+                return false;  // Too late for pickup
+            }
+        } else {
+            residual_capacity++;
+            
+            // Check dropoff deadline
+            if (arrival_time > get_alight_deadline(r)) {
+                return false;  // Too late for dropoff
+            }
+        }
+        
+        // Update state for next iteration
+        vehicle_node = new_location;
+        current_time = arrival_time;
+        prev_action = stop.is_pickup ? PICKUP : DROPOFF;
+    }
+    
+    return true;
+}
+
 }

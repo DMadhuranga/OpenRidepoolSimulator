@@ -1,15 +1,24 @@
 # OpenRidepoolSimulator
 
-OpenRidepoolSimulator is a C++ framework designed to aid the study of algorithms for ridepool assignment problems.  Its modular design is intended to make it easy to modify only the components one is interested in exploring and changing.  The base implementation closely follows the design presented in "On-demand high-capacity ride-sharing via dynamic trip-vehicle assignment" (Alonso-Mora et al, PNAS 2017).
+OpenRidepoolSimulator is a C++ framework for studying algorithms for ride-pooling assignment problems. Its modular design makes it easy to swap out individual components — assignment algorithms, rebalancing policies, CTSP heuristics, and RTV graph parameters — while keeping the rest of the simulation intact.
 
-The design allows flexibility to control:
+The base implementation follows the trip-vehicle assignment framework from:
 
-* Batching intervals
-* Map, vehicle, and request inputs
-* Easily create your own assignment algorithms
-* Easily create you own rebalancing policy
-* Insert you own CTSP subproblem heuristic
-* Easily change parameters for RTV graph generation
+> Alonso-Mora et al., "On-demand high-capacity ride-sharing via dynamic trip-vehicle assignment", *PNAS* 2017.
+
+This repository extends that baseline with **multi-modal transit integration**, implementing the methodology from:
+
+> Edirimanna, Hu & Samaranayake, "Integrating On-demand Ride-sharing with Mass Transit at-Scale", *arXiv* 2404.07691 (2024).
+
+In this extension, on-demand shuttle vehicles serve first-mile and/or last-mile legs that connect passengers to and from fixed-route mass transit. Transit legs are pre-planned and encoded as `leg_requests`; the assignment ILP treats them as first-class requests with hard connection deadlines, so the existing CTSP feasibility machinery enforces transit timing constraints without modification.
+
+The framework supports:
+
+* Batching intervals and simulation time windows
+* Swappable map, vehicle, and request inputs (five U.S. cities included)
+* Custom assignment algorithms and rebalancing policies
+* Pluggable CTSP subproblem heuristics
+* Multi-modal (first/last-mile + transit) trip generation and assignment
 
 The software is tested on Linux with the G++ compiler.
 
@@ -76,10 +85,26 @@ where the first argument is the number of threads the simulator may use in paral
 
 **Assignment behaviour**
 * `DISABLE_REASSIGNMENT` - (default `false`) prevent re-assigning vehicles that have a committed route
-* `DISABLE_DIRECT_TRIPS` - (default `false`) disallow single-passenger (non-shared) trips
+* `DISABLE_DIRECT_TRIPS` - (default `false`) disallow direct trips that does not use transit
 
 **Multi-modal**
 * `ALLOW_MULTI_MODAL` - (default `false`) enable multi-modal trips (first/last-mile + transit)
 * `ONLY_ALLOW_SINGLE_LEG` - (default `false`) when multi-modal is enabled, skip transit options that require both a first leg and a last leg, allowing single-leg connections only
 
-This software was produced by Matthew Zalesak and Vindula Jayawardana.
+## Citation
+
+If you use this software, please cite both the original framework and the multi-modal extension:
+
+```
+Alonso-Mora, J., Samaranayake, S., Wallar, A., Frazzoli, E., & Rus, D. (2017).
+On-demand high-capacity ride-sharing via dynamic trip-vehicle assignment.
+PNAS, 114(3), 462–467.
+
+Edirimanna, D., Hu, H., & Samaranayake, S. (2024).
+Integrating On-demand Ride-sharing with Mass Transit at-Scale.
+arXiv:2404.07691.
+```
+
+## Credits
+
+The base simulator was produced by Matthew Zalesak and Vindula Jayawardana. The multi-modal transit extension was developed by Danushka Edirimanna.

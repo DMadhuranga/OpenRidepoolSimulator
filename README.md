@@ -33,47 +33,53 @@ make clean
 
 To run the simulator, in the console enter
 
+```bash
+./prog <num_threads> DATAROOT <path> RESULTS_DIRECTORY <path> [key value ...]
 ```
 
-ALLOW_MULTI_MODAL=true 
-DISABLE_REASSIGNMENT="false"
-DISABLE_DIRECT_TRIPS="false"
-INTERVAL=30
-MAX_ADD_COST=4
-RTV_TIMELIMIT=10000
-GRB_TIME_LIMIT=20
-INITIAL_TIME=60000
-FINAL_TIME=190000
-./prog $no_veh DATAROOT $DATAROOT RESULTS_DIRECTORY $RESULTS_DIRECTORY RTV_TIMELIMIT $RTV_TIMELIMIT MAX_ADD_COST $MAX_ADD_COST VEHICLE_LIMIT $VEHICLE_LIMIT CARSIZE $CARSIZE GRB_TIME_LIMIT $GRB_TIME_LIMIT INTERVAL $INTERVAL MAX_WAITING 1200 MAX_DETOUR 1.2 DWELL_PICKUP 0 DWELL_ALIGHT 0 ALLOW_MULTI_MODAL $ALLOW_MULTI_MODAL DISABLE_DIRECT_TRIPS $DISABLE_DIRECT_TRIPS DISABLE_REASSIGNMENT "$DISABLE_REASSIGNMENT" INITIAL_TIME $INITIAL_TIME FINAL_TIME $FINAL_TIME
+Example:
 
+```bash
+./prog 4 DATAROOT data/chicago RESULTS_DIRECTORY results \
+  INTERVAL 30 MAX_WAITING 1200 MAX_DETOUR 1.2 CARSIZE 4 \
+  INITIAL_TIME 60000 FINAL_TIME 190000 \
+  GRB_TIME_LIMIT 20 RTV_TIMELIMIT 10000 \
+  ALLOW_MULTI_MODAL false DISABLE_REASSIGNMENT false
 ```
 
-where x is the number of threads the simulator may use in parallel.  Addiitonally, you may include the following arguments, all given as keywords followed by values.  For example, to run the program with 500 vehicles you would use
+where the first argument is the number of threads the simulator may use in parallel. All remaining arguments are key-value pairs. Full list of options (defaults in `src/settings.cpp`):
 
-```
-./prog x VEHICLE_LIMIT 500
-```
+**Data and I/O**
+* `DATAROOT` - (default `"data"`) root directory for input data
+* `RESULTS_DIRECTORY` - (default `"results"`) directory to write output files to
+* `REQUEST_DATA_FILE` - (default `"requests.csv"`) request file within `DATAROOT/requests/`
+* `VEHICLE_DATA_FILE` - (default `"vehicles.csv"`) vehicle file within `DATAROOT/vehicles/`
+* `TIMEFILE_NPY` - (default `"times.npy"`) binary uint16 travel-time matrix within `DATAROOT/map/`
 
-They keywords include (more listed in file settings.cpp):
+**Fleet and requests**
+* `CARSIZE` - (default `4`) maximum passengers per vehicle; if negative, per-vehicle capacity from `vehicles.csv` is used
+* `VEHICLE_LIMIT` - (default `1000`) cap on vehicles loaded from the vehicle file
+* `MAX_WAITING` - maximum waiting time in seconds for served passengers
+* `MAX_DETOUR` - maximum detour as a factor of direct travel time
+* `INITIAL_TIME` - (default `0`) simulation start time in HHMMSS format
+* `FINAL_TIME` - (default `240000`) simulation end time in HHMMSS format
+* `INTERVAL` - (default `60`) seconds between assignment epochs
 
-* ALLOW_MULTI_MODAL - Allow multi modal trips
-* DISABLE_REASSIGNMENT - Disable reassignment of requests to another vehicle
-* DISABLE_DIRECT_TRIPS - Disable direct trips (only multi-modal trip is allowed)
-* GRB_LICENSE_FILE - Gurobi license file path
-* GRB_TIME_LIMIT - Time limit given for ILP solver
-* DATAROOT - (default "./data") location to look for simulation inputs
-* RESULTS_DIRECTORY - (default "results") location to write results to, ignores if folder not found
-* VEHICLE_LIMIT - (default no limit) maximum number of vehicles to load from vehicle file.
-* MAX_WAITING - maximum waiting time for served passengers
-* MAX_DETOUR - maximum detour for served passengers as a factor of direct travel time
-* REQUEST_DATA_FILE - (default requests.csv) Input request file within DATAROOT/requests/
-* CARSIZE - (default 4) maximum number of passengers per vehicle
-* INITIAL_TIME - (default 0) starting time of simulation given as HHMMSS.
-* FINAL_TIME - (default 24000) ending time of simulation given as HHMMSS.
-* INTERVAL - (default 60) time that passes between subsequent assignment epochs
-* RTV_TIMELIMIT - (default 0) number of miliseconds the RTV graph generator can spend on each vehicle
+**Solver**
+* `GRB_TIME_LIMIT` - (default `90`) Gurobi solver time limit in seconds per epoch
+* `GRB_LICENSE_FILE` - path to Gurobi license file
+* `RTV_TIMELIMIT` - (default `0`, unlimited) milliseconds per vehicle for RTV graph generation
+* `DEMAND_PENALTY_C` - (default `1`) scaling constant `c` for the unserved-request penalty; penalty = `c × avg_travel_duration` of current requests
+* `LINEAR_ASSIGNMENT` - use LP relaxation instead of full ILP (default `false`)
+* `PRE_SOLVE_ILP` - warm-start ILP with LP solution (default `false`)
+* `CTSP` - route planner variant: `FULL`, `FIX_ONBOARD`, `FIX_PREFIX` (default), `MEGA_TSP`
+
+**Assignment behaviour**
+* `DISABLE_REASSIGNMENT` - (default `false`) prevent re-assigning vehicles that have a committed route
+* `DISABLE_DIRECT_TRIPS` - (default `false`) disallow single-passenger (non-shared) trips
+
+**Multi-modal**
+* `ALLOW_MULTI_MODAL` - (default `false`) enable multi-modal trips (first/last-mile + transit)
+* `ONLY_ALLOW_SINGLE_LEG` - (default `false`) when multi-modal is enabled, skip transit options that require both a first leg and a last leg, allowing single-leg connections only
 
 This software was produced by Matthew Zalesak and Vindula Jayawardana.
-
-
-# salloc --cpus-per-task=4 --mem=16g --time=4:00:00 --partition=samitha

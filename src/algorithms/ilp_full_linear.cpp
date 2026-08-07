@@ -384,7 +384,7 @@ void make_rrgraph(void* rr_data)
             if (min_wait + max(time, r1->entry_time) > r2->latest_boarding)
                 continue;
             
-            Vehicle dummyVehicle(0, 0, 4, start_node);
+            Vehicle dummyVehicle(0, 0, CARSIZE, start_node);
 
             pair<int,vector<NodeStop>> raw_path = routeplanner::travel(dummyVehicle, request_list, STANDARD,
                     *network, time);

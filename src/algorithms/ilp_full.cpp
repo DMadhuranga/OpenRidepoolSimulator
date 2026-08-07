@@ -38,6 +38,9 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <limits>
+#include <unordered_map>
+#include <unordered_set>
 
 using namespace std;
 
@@ -220,9 +223,22 @@ void make_rtvgraph(void* rtv_data)
         while (round.size() <= existing_trip_size + 2 || (round[round.size() - 1].size() && !timeout))
         {
             int k = round.size();
-            if (k > 3*v->capacity)
+            // Enumeration depth ceiling: capacity 1 needs more slack, since its trips are
+            // sequential chains.  Keyed off v->capacity so it holds when CARSIZE < 0.
+            int const depth_multiplier = (v->capacity == 1) ? 10 : 3;
+            if (k > depth_multiplier * v->capacity)
                 break;
             round.push_back(vector<Trip>());
+
+            // Membership indexes replacing the linear scans below.  prev_round_sets
+            // mirrors round[k-1], which is final by now (its failed placeholders were
+            // filtered at the end of the previous iteration) and backs the subset test.
+            // current_round_sets mirrors round[k] as it is built, placeholders included,
+            // and backs the uniqueness test.
+            set<set<Request*>> prev_round_sets;
+            for (auto & t : round[k - 1])
+                prev_round_sets.insert(set<Request*>(t.requests.begin(), t.requests.end()));
+            set<set<Request*>> current_round_sets;
 
             if (k == existing_trip_size)
             {
@@ -248,12 +264,15 @@ void make_rtvgraph(void* rtv_data)
                     throw runtime_error("Previous assignment no longer feasible. Vid: "+to_string(v->id));
                 }
                 round[k].push_back(previoustrip);
+                current_round_sets.insert(set<Request*>(
+                        previoustrip.requests.begin(), previoustrip.requests.end()));
             }
 
             // Add trips from validated_trip_cache (previous round) with k requests
             for (auto & trip : validated_trip_cache) {
                 if (trip.first.size() == k && trip.first != previous_assigned_passengers) {
                     round[k].push_back(trip.second);
+                    current_round_sets.insert(trip.first);
                 }
             }
 
@@ -335,14 +354,7 @@ void make_rtvgraph(void* rtv_data)
                     }
 
                     // Reject if this is not a unique trip.
-                    bool unique = true;
-                    for (auto & t : round[k])
-                        if (set<Request*>(t.requests.begin(), t.requests.end()) == requests)
-                        {
-                            unique = false;
-                            break;
-                        }
-                    if (!unique)
+                    if (current_round_sets.count(requests))
                         continue;
 
                     // if (k == existing_trip_size + 1)
@@ -355,6 +367,7 @@ void make_rtvgraph(void* rtv_data)
                     // Add a placeholder to show we've considered this option.
                     vector<Request*> request_vector (requests.begin(), requests.end());
                     round[k].push_back({-1, false, false, {}, request_vector});
+                    current_round_sets.insert(requests);
                     
                     // Reject if the RR graph does not connect the requests.
                     bool rr_connected = true;
@@ -399,14 +412,7 @@ void make_rtvgraph(void* rtv_data)
                             continue;
                         set<Request*> subset = requests;
                         subset.erase(r);
-                        bool matched = false;
-                        for (auto & t : round[k - 1])
-                            if (set<Request*>(t.requests.begin(), t.requests.end()) == subset)
-                            {
-                                matched = true;
-                                break;
-                            }
-                        if (!matched)
+                        if (!prev_round_sets.count(subset))
                         {
                             subset_test = false;
                             break;
@@ -421,6 +427,8 @@ void make_rtvgraph(void* rtv_data)
                     //         outputs << r->id << ",";
                     //     outputs << "preokay" << endl;
                     // }
+                    auto cached = validated_trip_cache.find(requests);
+
                     // Reject if there is no feasible routing for this request set.
                     bool preokay = true;
                     // if (k != existing_trip_size + 1 && first > 0)
@@ -430,11 +438,10 @@ void make_rtvgraph(void* rtv_data)
                     //     preokay = (duration <= RTV_TIMELIMIT);
                     // }
                     pair<int,vector<NodeStop>> path;
-                    if (validated_trip_cache.count(requests)) {
+                    if (cached != validated_trip_cache.end()) {
                         // Use validated trip from previous computation
-                        Trip cached_trip = validated_trip_cache[requests];
-                        path.first = cached_trip.cost;
-                        path.second = cached_trip.order_record;
+                        path.first = cached->second.cost;
+                        path.second = cached->second.order_record;
                     } else {
                         if (k == existing_trip_size + 1){
                             path = routeplanner::travel(
@@ -736,11 +743,18 @@ map<Request*, vector<Vehicle*>> prune_rvgraph(
                     (w1 * rank_ratio[b] + w2 * rank_size[b]);
          });
 
-    // Track how many requests each vehicle has been selected for so far.
-    map<Vehicle*, int> load;
-    for (auto v : vehicles) load[v] = 0;
+    // Requests selected per vehicle so far.  Indexed by position rather than keyed on
+    // the pointer: the selection loop reads this once per candidate edge.
+    unordered_map<Vehicle*, int> vidx;
+    vidx.reserve(vehicles.size() * 2);
+    for (size_t i = 0; i < vehicles.size(); i++)
+        vidx[vehicles[i]] = (int) i;
+    vector<int> load(vehicles.size(), 0);
 
     mt19937 rng(42);
+    uniform_real_distribution<double> unit_dist(0.0, 1.0);
+    vector<pair<double,Vehicle*>> keyed;  // hoisted: reused across requests
+    keyed.reserve(vehicles.size());
     map<Request*, vector<Vehicle*>> pruned;
 
     // Find the vehicle currently serving a request.
@@ -763,7 +777,7 @@ map<Request*, vector<Vehicle*>> prune_rvgraph(
             if (fv)
             {
                 pruned[r].push_back(fv);
-                load[fv]++;
+                load[vidx[fv]]++;
             }
         }
     }
@@ -778,37 +792,43 @@ map<Request*, vector<Vehicle*>> prune_rvgraph(
             rv_edges.count(r) ? rv_edges.at(r) : vector<Vehicle*>{};
 
         // Initialise selection from any vehicle already in pruned[r] (assigned vehicle).
-        vector<Vehicle*> selected    = pruned[r];
-        set<Vehicle*>    selected_set(selected.begin(), selected.end());
+        vector<Vehicle*> selected = pruned[r];
 
-        while ((int)selected.size() < PRUNING_RV_K)
+        // Fill the remaining slots by weighted sampling without replacement, weight
+        // w = 1/(1 + load), so lightly loaded vehicles are favoured.  Efraimidis-Spirakis
+        // does this in one pass: key each candidate by u^(1/w) for u ~ U(0,1) and keep
+        // the largest keys.  Taking logs gives the equivalent key log(u) * (1 + load) --
+        // negative, and more so the heavier the vehicle, hence the descending sort.
+        int need = PRUNING_RV_K - (int) selected.size();
+        if (need > 0 && !candidates.empty())
         {
-            // Build weight vector over candidates not yet selected for this request.
-            vector<pair<Vehicle*, double>> weighted;
-            double total_weight = 0.0;
+            keyed.clear();
             for (auto v : candidates)
             {
-                if (selected_set.count(v)) continue;
-                double w = 1.0 / (1.0 + load[v]);
-                weighted.push_back({v, w});
-                total_weight += w;
-            }
-            if (weighted.empty()) break;
+                bool already = false;
+                for (auto s : selected)      // at most a handful (the assigned vehicle)
+                    if (s == v) { already = true; break; }
+                if (already) continue;
 
-            // Sample one vehicle proportional to 1/(1 + load).
-            uniform_real_distribution<double> dist(0.0, total_weight);
-            double roll = dist(rng);
-            double cumulative = 0.0;
-            Vehicle* chosen = weighted.back().first;
-            for (auto& p : weighted)
+                double u = unit_dist(rng);
+                if (u <= 0.0) u = numeric_limits<double>::min();
+                keyed.push_back(make_pair(log(u) * (1.0 + load[vidx[v]]), v));
+            }
+
+            int take = min(need, (int) keyed.size());
+            if (take > 0)
             {
-                cumulative += p.second;
-                if (roll < cumulative) { chosen = p.first; break; }
+                partial_sort(keyed.begin(), keyed.begin() + take, keyed.end(),
+                        [](pair<double,Vehicle*> const & a,
+                           pair<double,Vehicle*> const & b) -> bool {
+                                return a.first > b.first;  // largest key wins
+                        });
+                for (int i = 0; i < take; i++)
+                {
+                    selected.push_back(keyed[i].second);
+                    load[vidx[keyed[i].second]]++;
+                }
             }
-
-            selected.push_back(chosen);
-            selected_set.insert(chosen);
-            load[chosen]++;
         }
 
         pruned[r] = selected;
@@ -871,7 +891,7 @@ void make_rrgraph(void* rr_data)
         int start_node = r1->origin;
         vector<Request*> compatible_requests;
         std::map<const Request*,double> cost_ratio;
-        
+
         for (Request* r2 : *requests)
         {
             if (*r1 == *r2)  // Don't pair with itself!
@@ -890,15 +910,15 @@ void make_rrgraph(void* rr_data)
                 continue;
             }
             vector<Request*> request_list { r1 , r2 };
-            
+
             // Heuristic to prune the requests without calling the travel function.
             int r2_origin = r2->origin;
             double buffer = 0;
             double min_wait = network->get_time(start_node, r2_origin) - buffer;
             if (min_wait + max(time, r1->entry_time) > r2->latest_boarding)
                 continue;
-            
-            Vehicle dummyVehicle(0, 0, 4, start_node);
+
+            Vehicle dummyVehicle(0, 0, CARSIZE, start_node);
 
             pair<int,vector<NodeStop>> raw_path = routeplanner::travel(dummyVehicle, request_list, STANDARD,
                     *network, time);
@@ -911,7 +931,7 @@ void make_rrgraph(void* rr_data)
             }
 
         }
-        
+
         auto sort_lambda = [network, &cost_ratio, r1](const Request* a, const Request* b) -> bool
         {
             double avalue = cost_ratio[a]; // detour_factor(r1, a, network);
@@ -972,6 +992,7 @@ generator::assignment_result assignment(
         map<Request*, vector<Vehicle*>> rv_edges;
         struct rv_thread_data rv_data {time, &rv_edges, &network, &requests, &vehicles};
         threads.auto_thread(requests.size(), make_rvgraph, (void*) &rv_data);
+
         rv_edges = prune_rvgraph(rv_edges, requests, vehicles, fixed_requests, time);
 
         for (auto x : rv_edges) // Invert the graph.
@@ -986,7 +1007,7 @@ generator::assignment_result assignment(
         }
     }
     info("Total R-V edges of RV graph " + to_string(vr_edge_cnt), Yellow);
-    
+
     info("Buidling R-R edges of RV graph", Yellow);
     map<Request*, set<Request*>> rr_edges;  // RR edges indexed by request id.
     {
@@ -1026,58 +1047,60 @@ generator::assignment_result assignment(
     }
     mtx.unlock();
 
-    // Clean prev_trip_list by removing trips that have requests not in current requests
-    set<int> valid_request_ids;
+    // Drop trips referencing requests that are no longer live.  Filtered in place, so
+    // surviving Trips are never copied; erase must return an iterator to stay valid.
+    unordered_set<int> valid_request_ids;
+    valid_request_ids.reserve(requests.size() * 2);
     for (auto r : requests) {
         valid_request_ids.insert(r->id);
     }
-    
-    for (auto & x : prev_trip_list)
+
+    for (auto it = prev_trip_list.begin(); it != prev_trip_list.end(); )
     {
-        Vehicle* v = x.first;
-        vector<Trip> trips = x.second;
-        vector<Trip> filtered_trips;
-        
-        for (auto & trip : trips) {
-            bool all_requests_valid = true;
-            for (auto req : trip.requests) {
-                if (valid_request_ids.find(req->id) == valid_request_ids.end()) {
-                    all_requests_valid = false;
-                    break;
-                }
-            }
-            if (all_requests_valid) {
-                filtered_trips.push_back(trip);
-            }
-        }
-        
-        if (filtered_trips.empty()) {
-            prev_trip_list.erase(v);
-        } else {
-            prev_trip_list[v] = filtered_trips;
-        }
+        vector<Trip> & trips = it->second;
+        auto surviving = remove_if(trips.begin(), trips.end(),
+                [&valid_request_ids](Trip const & trip) -> bool {
+                        for (auto req : trip.requests)
+                            if (!valid_request_ids.count(req->id))
+                                return true;  // drop: references a request that is gone
+                        return false;
+                });
+        trips.erase(surviving, trips.end());
+
+        if (trips.empty())
+            it = prev_trip_list.erase(it);
+        else
+            ++it;
     }
 
     map<Vehicle*, vector<Trip>> trip_list;  // Store possible trips per vehicle
     {
-        vector<Vehicle*> sorted_vs = vehicles;
-        sort(sorted_vs.begin(), sorted_vs.end(),
-                [vr_edges](Vehicle* & a, Vehicle* & b) -> bool {
-                        if (vr_edges.count(a) && !vr_edges.count(b))
-                            return true;
-                        if (vr_edges.count(b) && !vr_edges.count(a))
-                            return false;
-                        if (vr_edges.count(a) && vr_edges.count(b))
-                            if (vr_edges.at(a).size() > vr_edges.at(b).size())
-                                return true;
-                            else if (vr_edges.at(a).size() < vr_edges.at(b).size())
-                                return false;
-                        return a->id < b->id;
+        // Order vehicles by RV-edge count, descending, ties by id; absent from vr_edges
+        // means zero edges.  Keys are materialised up front so the comparator does no
+        // map lookups.
+        vector<pair<int,Vehicle*>> keyed;  // (-edge_count, vehicle); ascending sort
+        keyed.reserve(vehicles.size());
+        for (auto v : vehicles)
+        {
+            auto e = vr_edges.find(v);
+            keyed.push_back(make_pair(
+                    e == vr_edges.end() ? 0 : -(int) e->second.size(), v));
+        }
+        sort(keyed.begin(), keyed.end(),
+                [](pair<int,Vehicle*> const & a, pair<int,Vehicle*> const & b) -> bool {
+                        if (a.first != b.first)
+                            return a.first < b.first;
+                        return a.second->id < b.second->id;
                 });
+        vector<Vehicle*> sorted_vs;
+        sorted_vs.reserve(keyed.size());
+        for (auto & k : keyed)
+            sorted_vs.push_back(k.second);
+
         struct rtv_thread_data rtv_data {time, &rr_edges, &vr_edges, &trip_list, &network, &sorted_vs, &prev_trip_list};
         threads.mega_thread(vehicles.size(), make_rtvgraph, (void*) &rtv_data);
     }
-    
+
     map<Vehicle*, vector<Trip>> linear_trip_list;
     for (auto & x : trip_list)
     {

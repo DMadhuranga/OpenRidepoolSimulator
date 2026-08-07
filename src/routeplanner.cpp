@@ -116,7 +116,14 @@ pair<int,vector<NodeStop*>> recursive_search(int initial_location, int residual_
         if (previous != NULL && !m->node->is_pickup && previous->node->node == m->node->node)
             continue;
         previous = m;
-        
+
+        // With no residual capacity the only admissible next stops are alightings,
+        // so reject pickups before doing any travel-time work.  Equivalent to the
+        // capacity test below, just hoisted above it; hits constantly at CARSIZE 1
+        // where the vehicle is full whenever it is carrying anyone.
+        if (residual_capacity <= 0 && m->node->is_pickup)
+            continue;
+
         // Compute time of visit.
         int new_location = m->node->node;
         int travel_time = network.get_time(initial_location, new_location);
@@ -389,7 +396,14 @@ pair<int,vector<NodeStop*>> recursive_search_timed(int initial_location, int res
         if (previous != NULL && !m->node->is_pickup && previous->node->node == m->node->node)
             continue;
         previous = m;
-        
+
+        // With no residual capacity the only admissible next stops are alightings,
+        // so reject pickups before doing any travel-time work.  Equivalent to the
+        // capacity test below, just hoisted above it; hits constantly at CARSIZE 1
+        // where the vehicle is full whenever it is carrying anyone.
+        if (residual_capacity <= 0 && m->node->is_pickup)
+            continue;
+
         // Compute time of visit.
         int new_location = m->node->node;
         int travel_time = network.get_time(initial_location, new_location);

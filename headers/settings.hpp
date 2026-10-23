@@ -8,6 +8,7 @@
 
 #define OPTIMIZER_VERBOSE true
 #define SIMULATOR_VERBOSE false
+#define DEBUG_LOG true  // Per-vehicle RTV tracing to RESULTS_DIRECTORY/debug.log
 #define PRUNING_RV_K 30 // 30 // 0 // 30        // Heuristic that only connects requests with nearest k vehicles.
 #define PRUNING_RR_K 30 //10    // Heuristic that only connects requests with nearest k requests.
 #define FIX_ASSIGNMENT_BEFORE 300 //10    // Heuristic that fixes vehicle assigment within # seconds of picking up.
@@ -52,6 +53,8 @@ extern bool LINEAR_ASSIGNMENT;
 extern bool DISABLE_DIRECT_TRIPS;
 extern bool DISABLE_REASSIGNMENT;
 extern bool PRE_SOLVE_ILP;
+extern int GRB_PRESOLVE; // Gurobi presolve level: -1 auto, 0 off, 1 default, 2 aggressive
+extern bool VALIDATE_TRIP_LIST; // Assert-only RTV trip list check; ~5% of an epoch
 extern bool ONLY_ALLOW_SINGLE_LEG;
 
 void initialize(int argc, char** argv);

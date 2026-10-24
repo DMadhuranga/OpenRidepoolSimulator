@@ -540,7 +540,7 @@ generator::assignment_result assignment(
     double time_limit = GUROBI_TIME_LIMIT;
     map<Vehicle*,Trip> empty_assignment;
     
-    assignment = ilp_common_gurobi::ilp_assignment_gurobi(trip_list, requests, time, time_limit, empty_assignment);
+    assignment = ilp_common_gurobi::ilp_assignment_gurobi(trip_list, requests, time, time_limit, empty_assignment, /*primary_stats=*/false);
     // while (!assignment_found) {
     //     try { 
     //         assignment_found = true;

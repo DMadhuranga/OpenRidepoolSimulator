@@ -66,6 +66,8 @@ bool LINEAR_ASSIGNMENT = false;
 bool DISABLE_DIRECT_TRIPS = false;
 bool DISABLE_REASSIGNMENT = false;
 bool PRE_SOLVE_ILP = false;
+int GRB_PRESOLVE = 1;  // preserves the value ilp_common_gurobi.cpp used to hardcode
+bool VALIDATE_TRIP_LIST = false;
 bool ONLY_ALLOW_SINGLE_LEG = false;
 
 map<string,Algorithm> algorithm_index {
@@ -211,6 +213,19 @@ void initialize(int argc, char** argv)
                 throw runtime_error("Argument could not be converted into a boolean.");
             }
         }
+        else if (key == "VALIDATE_TRIP_LIST")
+        {
+            string s = boost::algorithm::to_lower_copy(value);
+            if (s == "true")
+                VALIDATE_TRIP_LIST = true;
+            else if (s == "false")
+                VALIDATE_TRIP_LIST = false;
+            else
+            {
+                cout << "For " << key << " trying to interpret \"" << value << "\"." << endl;
+                throw runtime_error("Argument could not be converted into a boolean.");
+            }
+        }
         else if (key == "PRE_SOLVE_ILP")
         {
             string s = boost::algorithm::to_lower_copy(value);
@@ -243,6 +258,8 @@ void initialize(int argc, char** argv)
             RTV_TIMELIMIT = stoi(value);
         else if (key == "GRB_TIME_LIMIT")
             GUROBI_TIME_LIMIT = stod(value);
+        else if (key == "GRB_PRESOLVE")
+            GRB_PRESOLVE = stoi(value);
         else if (key == "DEMAND_PENALTY_C")
             DEMAND_PENALTY_C = stod(value);
         else if (key == "DWELL_PICKUP")

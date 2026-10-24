@@ -34,11 +34,22 @@
 
 namespace ilp_common_gurobi
 {
+// Seconds spent in the MOST RECENT ilp_assignment_gurobi() call.  Copy them out
+// before calling again; single-threaded, like the solve itself.
+extern double last_prep_seconds;         // building costs / rids_to_trips
+extern double last_model_build_seconds;  // GRBEnv + addVar + addConstr, pre-optimize
+extern double last_solve_seconds;        // model.optimize() alone
+extern double last_extract_seconds;      // reading the solution back out
+
+// `primary_stats` picks the stats file: true -> ilp.csv, false -> linear_a_ilp.csv.
+// It used to be inferred from linear_assignment being non-empty, which sent the
+// main ILP's metrics to the wrong file once the warm start could be off.
 std::map<Vehicle*,Trip> ilp_assignment_gurobi(
         std::map<Vehicle*, std::vector<Trip>> const & trip_list, 
         std::vector<Request*> const & requests, 
         int time,
         double time_limit,
-        std::map<Vehicle*, Trip> const & linear_assignment);
+        std::map<Vehicle*, Trip> const & linear_assignment,
+        bool primary_stats);
 }
 #endif /* ALGORITHMS_ILP_COMMON_GUROBI_HPP */

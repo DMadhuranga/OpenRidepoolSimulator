@@ -23,6 +23,23 @@
  */
 
 #include "algorithms/ilp_common_gurobi.hpp"
+
+// ===================== DIAGNOSTIC INSTRUMENTATION =========================
+// Times the SERIAL, single-threaded region between the RTV graph and the ILP.
+// Measurement (2026-08-26) put ~28 s/epoch there on chicago/178, scaling at
+// 12.9 s per million trips with r=+0.983 vs trip_list size.  This splits that
+// figure across the individual passes.  Writes phases.csv in RESULTS_DIRECTORY.
+#include <chrono>
+#include <fstream>
+namespace instr {
+    static std::chrono::steady_clock::time_point _t0;
+    inline void tic() { _t0 = std::chrono::steady_clock::now(); }
+    inline double toc() {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+                   std::chrono::steady_clock::now() - _t0).count() / 1e6;
+    }
+}
+// ==========================================================================
 #include "formatting.hpp"
 #include "generator.hpp"
 #include "routeplanner.hpp"
@@ -270,13 +287,23 @@ void make_rtvgraph(void* rtv_data)
 
             // Add trips from validated_trip_cache (previous round) with k requests
             for (auto & trip : validated_trip_cache) {
-                if (trip.first.size() == k && trip.first != previous_assigned_passengers) {
-                    round[k].push_back(trip.second);
-                    current_round_sets.insert(trip.first);
-                }
+                // Only consider trips with k requests.
+                if (trip.first.size() != k)
+                    continue;
+                // The previously assigned set is pushed above as previoustrip.
+                if (trip.first == previous_assigned_passengers)
+                    continue;
+                // For highly loaded vehicles, skip trips that does not have all the previously assigned passengers
+                if (skip_fresh_generation && !includes(
+                        trip.first.begin(), trip.first.end(),
+                        previous_assigned_passengers.begin(), previous_assigned_passengers.end()))
+                    continue;
+                round[k].push_back(trip.second);
+                current_round_sets.insert(trip.first);
             }
 
-            if (DISABLE_REASSIGNMENT && k <= existing_trip_size)
+            // Neither mode can build a trip smaller than the existing assignment.
+            if ((DISABLE_REASSIGNMENT || skip_fresh_generation) && k <= existing_trip_size)
                 continue;
 
             for (auto first = 0; first < round[k - 1].size(); first++)
@@ -286,9 +313,21 @@ void make_rtvgraph(void* rtv_data)
                     break;
                 // Get new request set.
                 set<Request*> left (round[k-1][first].requests.begin(), round[k-1][first].requests.end());
+
+                // For highly loaded vehicle we add a request only if they include all the previously assigned passengers.
+                if (skip_fresh_generation && !includes(
+                        left.begin(), left.end(),
+                        previous_assigned_passengers.begin(), previous_assigned_passengers.end()))
+                    continue;
+
                 int prev_round = k - 1;
                 int starting_second = first + 1;
-                if (k == existing_trip_size+1 && (DISABLE_REASSIGNMENT || timeout)) {
+                // At k == existing_trip_size+1 the append-only rule leaves the previous
+                // assignment as the only trip in round[k-1], so pairing that round with
+                // itself yields nothing — the added request must come from the size-1
+                // trips.  Same reason the DISABLE_REASSIGNMENT and timeout cases do this.
+                if (k == existing_trip_size+1
+                        && (DISABLE_REASSIGNMENT || timeout || skip_fresh_generation)) {
                     prev_round = 1;
                     starting_second = 0;
                 }
@@ -344,15 +383,6 @@ void make_rtvgraph(void* rtv_data)
                     if (requests.size() != k)
                         continue;
 
-                    // For heavily loaded vehicles, skip trips that contain no existing
-                    // assigned passengers — only build on top of prior assignments.
-                    if (skip_fresh_generation) {
-                        bool has_existing = false;
-                        for (auto r : requests)
-                            if (previous_assigned_passengers.count(r)) { has_existing = true; break; }
-                        if (!has_existing) continue;
-                    }
-
                     // Reject if this is not a unique trip.
                     if (current_round_sets.count(requests))
                         continue;
@@ -405,7 +435,10 @@ void make_rtvgraph(void* rtv_data)
 
                     for (auto r : requests)
                     {
-                        if (DISABLE_REASSIGNMENT && previous_assigned_passengers.count(r))
+                        // Subsets dropping an assigned request are never generated in
+                        // these modes, so requiring one would reject every candidate.
+                        if ((DISABLE_REASSIGNMENT || skip_fresh_generation)
+                                && previous_assigned_passengers.count(r))
                             continue;
                         // if (k == existing_trip_size + 1 && timeout && previous_assigned_passengers.count(r))
                         if (k == existing_trip_size + 1 && first==0 && timeout && previous_assigned_passengers.count(r))
@@ -529,8 +562,9 @@ void make_rtvgraph(void* rtv_data)
                 throw runtime_error("Previous assignment no longer feasible.");
         }
         
+        // Dead after this point, and the copy was happening under the shared lock.
         mtx.lock();
-        (*trip_list)[v] = potential_trip_list;
+        (*trip_list)[v] = std::move(potential_trip_list);
         mtx.unlock();
 
         // Check the time.
@@ -538,12 +572,16 @@ void make_rtvgraph(void* rtv_data)
         double duration_seconds = duration / 1000.0; // Convert milliseconds to seconds
         outputs << "RTV construction time (s): " << duration_seconds << endl;
         outputs << "Ended RTV for vid " << v->id << endl;
-        mtx.lock();
+        // record per-vehicle RTV build times/ # of trips for analysis.
+        if (DEBUG_LOG)
         {
-            ofstream debuglogfile (RESULTS_DIRECTORY + "/debug.log", std::ios_base::app);
-            debuglogfile << outputs.rdbuf();
+            mtx.lock();
+            {
+                ofstream debuglogfile (RESULTS_DIRECTORY + "/debug.log", std::ios_base::app);
+                debuglogfile << outputs.rdbuf();
+            }
+            mtx.unlock();
         }
-        mtx.unlock();
 
     }
 }
@@ -957,6 +995,17 @@ generator::assignment_result assignment(
         Network const & network,
         Threads & threads)
 {
+    // Times the RV graph, RR graph and prev_trip_list filter.  Its own lap timer:
+    // instr::tic/toc share one static and would not nest.
+    double instr_rv = 0, instr_rr = 0, instr_filter = 0;
+    std::chrono::steady_clock::time_point _g0 = std::chrono::steady_clock::now();
+    auto _glap = [&_g0]() -> double {
+        auto now = std::chrono::steady_clock::now();
+        double d = std::chrono::duration_cast<std::chrono::microseconds>(now - _g0).count() / 1e6;
+        _g0 = now;
+        return d;
+    };
+
     info("Building R-V edges of RV graph", Yellow);
 
     // Get previously assigned requests
@@ -1006,6 +1055,7 @@ generator::assignment_result assignment(
             }
         }
     }
+    instr_rv = _glap();
     info("Total R-V edges of RV graph " + to_string(vr_edge_cnt), Yellow);
 
     info("Buidling R-R edges of RV graph", Yellow);
@@ -1037,15 +1087,15 @@ generator::assignment_result assignment(
     int rr_count = 0;
     for (auto & x : rr_edges)
         rr_count += x.second.size();
+    instr_rr = _glap();
     info("RR edges is of size " + to_string(rr_count), Red);
     
     info("Building RTV graph", Yellow);
-    mtx.lock();
+    if (DEBUG_LOG)
     {
         ofstream debuglog(RESULTS_DIRECTORY + "/debug.log", ios_base::app);
         debuglog << "TIME STAMP " << encode_time(time) << endl;
     }
-    mtx.unlock();
 
     // Drop trips referencing requests that are no longer live.  Filtered in place, so
     // surviving Trips are never copied; erase must return an iterator to stay valid.
@@ -1073,6 +1123,15 @@ generator::assignment_result assignment(
             ++it;
     }
 
+    instr_filter = _glap();
+
+    // DIAGNOSTIC: per-phase wall times for the serial region after the RTV graph.
+    double instr_rtv=0, instr_lin=0, instr_count=0,
+           instr_chk1=0, instr_chk2=0, instr_presolve=0, instr_ilp=0;
+    // Gurobi breakdown, copied out of ilp_common_gurobi after each call.
+    double ps_prep=0, ps_build=0, ps_solve=0, ps_extract=0;
+    double mn_prep=0, mn_build=0, mn_solve=0, mn_extract=0;
+
     map<Vehicle*, vector<Trip>> trip_list;  // Store possible trips per vehicle
     {
         // Order vehicles by RV-edge count, descending, ties by id; absent from vr_edges
@@ -1098,31 +1157,43 @@ generator::assignment_result assignment(
             sorted_vs.push_back(k.second);
 
         struct rtv_thread_data rtv_data {time, &rr_edges, &vr_edges, &trip_list, &network, &sorted_vs, &prev_trip_list};
+        instr::tic();
         threads.mega_thread(vehicles.size(), make_rtvgraph, (void*) &rtv_data);
+        instr_rtv = instr::toc();
     }
-
+    
+    // Only the warm-start presolve below reads this, hence the PRE_SOLVE_ILP gate.
     map<Vehicle*, vector<Trip>> linear_trip_list;
-    for (auto & x : trip_list)
+    instr::tic();
+    if (PRE_SOLVE_ILP)
     {
-        Vehicle* v = x.first;
-        set<Request*> previous_assigned_passengers (v->pending_requests.begin(), v->pending_requests.end());
-        vector<Trip> trips = x.second;
-        for (auto & t : trips)
+        for (auto & x : trip_list)
         {
-            set<Request*> trip_requests = set<Request*>(t.requests.begin(), t.requests.end());
-            if (std::includes(trip_requests.begin(), trip_requests.end(), 
-                previous_assigned_passengers.begin(), previous_assigned_passengers.end()))
+            Vehicle* v = x.first;
+            set<Request*> previous_assigned_passengers (v->pending_requests.begin(), v->pending_requests.end());
+            vector<Trip> const & trips = x.second;
+            for (auto & t : trips)
             {
-                linear_trip_list[v].push_back(t);
+                set<Request*> trip_requests = set<Request*>(t.requests.begin(), t.requests.end());
+                if (std::includes(trip_requests.begin(), trip_requests.end(), 
+                    previous_assigned_passengers.begin(), previous_assigned_passengers.end()))
+                {
+                    linear_trip_list[v].push_back(t);
+                }
             }
         }
     }
 
+    instr_lin = instr::toc(); instr::tic();
     int count = 0;
     for (auto & x : trip_list)
         count += x.second.size();
     info("Trip list is of size " + to_string(count), Red);
+    instr_count = instr::toc(); instr::tic();
     
+    // Assert-only, and costs ~5% of an epoch in std::set insertions over every
+    // trip -- nothing downstream reads `rs` or `ps`.  Off by default.
+    if (VALIDATE_TRIP_LIST)
     { // Check to be sure no requests were downright rejected if they were previously assigned.
         set<Request*> rs;
         for (auto & x : trip_list)
@@ -1143,6 +1214,7 @@ generator::assignment_result assignment(
                     throw runtime_error("Help!  I was a pending request!");
                 }
     }
+    instr_chk1 = instr::toc(); instr::tic();
     { // Check to be sure that all previous trips are included in the future possibilities!
         for (auto v : vehicles)
         {
@@ -1187,13 +1259,22 @@ generator::assignment_result assignment(
     // }
     // mtx.unlock();
 
+    instr_chk2 = instr::toc();
     map<Vehicle*,Trip> assignment;
     double time_limit = GUROBI_TIME_LIMIT;
     
+    // WARM-START PRESOLVE, linear_assignment becomes the full RTV ILP warm-start solution.  
+    // It can affect both quality and time.
     map<Vehicle*,Trip> empty_assignment;
-    map<Vehicle*,Trip> linear_assignment = ilp_common_gurobi::ilp_assignment_gurobi(linear_trip_list, requests, time, 20, empty_assignment);
-    
+    instr::tic();
+    if (PRE_SOLVE_ILP)
     {
+        map<Vehicle*,Trip> linear_assignment = ilp_common_gurobi::ilp_assignment_gurobi(linear_trip_list, requests, time, 20, empty_assignment, /*primary_stats=*/false);
+        ps_prep    = ilp_common_gurobi::last_prep_seconds;
+        ps_build   = ilp_common_gurobi::last_model_build_seconds;
+        ps_solve   = ilp_common_gurobi::last_solve_seconds;
+        ps_extract = ilp_common_gurobi::last_extract_seconds;
+
         ofstream assignment_file(RESULTS_DIRECTORY + "/linear_assignment.log", std::ios_base::app);
         assignment_file << "TIME STAMP:" << encode_time(time) << endl;
         for (auto &t : linear_assignment) {
@@ -1205,15 +1286,22 @@ generator::assignment_result assignment(
         }
         empty_assignment = linear_assignment;
     }
+    instr_presolve = instr::toc();
 
+    instr::tic();
     try { 
-        assignment = ilp_common_gurobi::ilp_assignment_gurobi(trip_list, requests, time, time_limit, empty_assignment);
+        assignment = ilp_common_gurobi::ilp_assignment_gurobi(trip_list, requests, time, time_limit, empty_assignment, /*primary_stats=*/true);
     } catch (GRBException e) {
         cout << "GRBException ocurred" << endl;
         cout << "Error code = " << e.getErrorCode() << endl;
         cout << e.getMessage() << endl;
         assignment = empty_assignment;
     }
+    instr_ilp  = instr::toc();
+    mn_prep    = ilp_common_gurobi::last_prep_seconds;
+    mn_build   = ilp_common_gurobi::last_model_build_seconds;
+    mn_solve   = ilp_common_gurobi::last_solve_seconds;
+    mn_extract = ilp_common_gurobi::last_extract_seconds;
 
     {
         ofstream unassigned_file(RESULTS_DIRECTORY + "/unassigned_requests.log", std::ios_base::app);
@@ -1273,7 +1361,32 @@ generator::assignment_result assignment(
         if ((int)stat_trips_per_veh.size() > STAT_HISTORY) stat_trips_per_veh.pop_front();
     }
 
-    struct generator::assignment_result ass_result {trip_list, assignment};
+    {   // DIAGNOSTIC: emit the per-phase breakdown for this epoch.
+        int n_trips = 0;
+        for (auto & x : trip_list) n_trips += x.second.size();
+        int n_lin = 0;
+        for (auto & x : linear_trip_list) n_lin += x.second.size();
+        double serial = instr_lin + instr_count + instr_chk1 + instr_chk2;
+        std::ofstream ph(RESULTS_DIRECTORY + "/phases.csv", std::ios_base::app);
+        if (ph.tellp() == 0)
+            ph << "Time,n_trips,n_linear_trips,"
+                  "rtv,linear_build,count,check1,check2,serial_total,"
+                  "presolve_total,ps_prep,ps_build,ps_solve,ps_extract,"
+                  "main_total,mn_prep,mn_build,mn_solve,mn_extract,"
+                  "rv,rr,filter\n";
+        ph << time << "," << n_trips << "," << n_lin << ","
+           << instr_rtv << "," << instr_lin << ","
+           << instr_count << "," << instr_chk1 << "," << instr_chk2 << ","
+           << serial << ","
+           << instr_presolve << "," << ps_prep << "," << ps_build << ","
+           << ps_solve << "," << ps_extract << ","
+           << instr_ilp << "," << mn_prep << "," << mn_build << ","
+           << mn_solve << "," << mn_extract << ","
+           << instr_rv << "," << instr_rr << "," << instr_filter << "\n";
+    }
+
+    // Both are dead after this; copying instead duplicated every Trip in trip_list.
+    struct generator::assignment_result ass_result {std::move(trip_list), std::move(assignment)};
     return ass_result;
 }
 

@@ -207,11 +207,12 @@ int main(int argc, char *argv[])
         map<Vehicle*, Trip> assigned_trips;
         bool ignore_trip_route = false;
         
+        // prev_trip_list is dead at both ends; copying it cost 4 deep copies per epoch.
         struct generator::assignment_result ass_results = generator::trip_assignment(active_vehicles,
-                active_requests, prev_trip_list, time, network, threads);
+                active_requests, std::move(prev_trip_list), time, network, threads);
 
         assigned_trips = ass_results.assignment;
-        prev_trip_list = ass_results.trip_list;
+        prev_trip_list = std::move(ass_results.trip_list);
         // try { 
         // } catch (GRBException e) {
         //     assigned_trips = prev_assignment;

@@ -23,6 +23,8 @@
  */
 
 #include "algorithms/ilp_common_gurobi.hpp"
+
+#include <chrono>
 #include "formatting.hpp"
 #include "settings.hpp"
 
@@ -30,6 +32,8 @@
 #include "gurobi_c++.h"            // For gurobi functions.
 #include <set>
 #include <sstream>
+#include <unordered_map>
+#include <vector>
 
 // using namespace mosek::fusion;  // For MOSEK functions.
 // using namespace monty;          // For MOSEK functions.
@@ -39,11 +43,27 @@ string itos(int i) {stringstream s; s << i; return s.str(); }
 namespace ilp_common_gurobi
 {
 
+double last_prep_seconds        = 0.0;
+double last_model_build_seconds = 0.0;
+double last_solve_seconds       = 0.0;
+double last_extract_seconds     = 0.0;
+
+namespace {
+    std::chrono::steady_clock::time_point _tp;
+    inline void _tic() { _tp = std::chrono::steady_clock::now(); }
+    inline double _toc() {
+        return std::chrono::duration_cast<std::chrono::microseconds>(
+                   std::chrono::steady_clock::now() - _tp).count() / 1e6;
+    }
+}
 
 /* Function to solve main assignment problem. */
 map<Vehicle*,Trip> ilp_assignment_gurobi(
-        map<Vehicle*, vector<Trip>> const & trip_list, vector<Request*> const & requests, int time, double time_limit, map<Vehicle*, Trip> const & linear_assignment)
+        map<Vehicle*, vector<Trip>> const & trip_list, vector<Request*> const & requests, int time, double time_limit, map<Vehicle*, Trip> const & linear_assignment, bool primary_stats)
 {
+    last_prep_seconds = last_model_build_seconds = 0.0;
+    last_solve_seconds = last_extract_seconds = 0.0;
+    _tic();
     // Simultaneously count variable, get cost vector, and build set for constraint 2.
     int K = 0; //requests.size();
     map<int, int> k_map;
@@ -72,7 +92,33 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
     double miss_penalty = (D > 0.0) ? DEMAND_PENALTY_C * D : MISS_COST;
     int index = 0;
     vector<double> costs;
-    map<int, set<int>> rids_to_trips;  // IRK + ITI
+    // Was map<int,set<int>>; only ever looked up by id, so dense slots give the
+    // same constraints without a tree descent per (trip, request) pair.
+    unordered_map<int,int> rid_idx;
+    rid_idx.reserve(requests.size() * 2);
+    for (Request* r : requests)
+    {
+        int nxt = (int) rid_idx.size();
+        rid_idx.emplace(r->id, nxt);
+    }
+    vector<vector<int>> rids_to_trips (rid_idx.size());
+    static vector<int> const no_trips;   // for ids not among `requests`
+    auto trips_of = [&rid_idx, &rids_to_trips](int id) -> vector<int> const & {
+        auto it = rid_idx.find(id);
+        return it == rid_idx.end() ? no_trips : rids_to_trips[it->second];
+    };
+    // Replaces three O(requests.size()) scans nested in the constraint loops.
+    unordered_map<int,Request*> req_by_id;
+    req_by_id.reserve(requests.size() * 2);
+    for (Request* r : requests)
+        req_by_id.emplace(r->id, r);
+
+    // One push_back per trip, ~1.6 M of them, so size it once.
+    {
+        size_t total_trips = 0;
+        for (auto & p : trip_list) total_trips += p.second.size();
+        costs.reserve(total_trips);
+    }
 
     set<int> initial_sol_e;  // IRK + ITI
     double initial_cost = 0;
@@ -80,7 +126,7 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
     
     for (auto &id_trip_pair : trip_list)
     {
-        vector<Trip> trips = id_trip_pair.second;
+        vector<Trip> const & trips = id_trip_pair.second;
         Vehicle* v = id_trip_pair.first;
         set<Request*> prev (v->pending_requests.begin(), v->pending_requests.end());
         double prev_trip_cost = -1;
@@ -89,7 +135,7 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
             prev.clear();
             if (linear_assignment.count(v))
             {
-                Trip trip = linear_assignment.at(v);
+                Trip const & trip = linear_assignment.at(v);
                 prev_trip_cost = trip.cost;
                 if ((trip.requests.size() == 0 && v->passengers.size() == 0) && trip.cost != 0)
                     cout << "Non-zero empty trip. vid: " << v->id << " trip cost: " << prev_trip_cost << endl;
@@ -110,20 +156,22 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
         for (auto &trip : trips)
         {
             // cout << "Trip cost: " << trip.cost << "\t Req: ";
-            vector<Request*> requests = trip.requests;
-            bool contain_first_leg = false;
+            vector<Request*> const & requests = trip.requests;
             for (Request* request : requests)
             {
                 int id = request->id;
                 // cout << id << "\t";
-                rids_to_trips[id].insert(index);
-                if (request->original_req_id != -1 && request->leg_type == 0 && !request->assigned)
-                {
-                    contain_first_leg = true;
-                }
+                auto rit = rid_idx.find(id);
+                if (rit == rid_idx.end())
+                    continue;   // such an entry was never read back
+                // `index` is non-decreasing, so a repeat can only be back(): set semantics.
+                auto & slot = rids_to_trips[rit->second];
+                if (slot.empty() || slot.back() != index)
+                    slot.push_back(index);
             }
-            set<Request*> rs (trip.requests.begin(), trip.requests.end());
-            if (!added_to_initial_sol && prev == rs)
+            // Build the set only when the match is still possible; a larger `prev` can't match.
+            if (!added_to_initial_sol && prev.size() <= trip.requests.size()
+                && prev == set<Request*>(trip.requests.begin(), trip.requests.end()))
             {
                 initial_sol_e.insert(index);
                 added_to_initial_sol = true;
@@ -145,17 +193,20 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
                 //     // throw runtime_error("Cost mismatch for vid " + to_string(v->id));
                 // }
             }
-            if (contain_first_leg)
-                costs.push_back(trip.cost);
-            else
-                costs.push_back(trip.cost);
+            // Both branches of the former contain_first_leg test were identical.
+            costs.push_back(trip.cost);
             index ++;
             // cout << endl;
         }
     }
     
     if (index == 0)
+    {
+        last_prep_seconds = _toc();
         return {};
+    }
+    last_prep_seconds = _toc();
+    _tic();
 
     GRBVar* e = nullptr;
     GRBVar* x = nullptr;
@@ -169,18 +220,19 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
     // Create an empty model
     GRBModel model = GRBModel(env);
 
-    e = new GRBVar[index];
-    x = new GRBVar[K];
-    for (auto i = 0; i < index; i++)
+    // Batched: was 1.6 M addVar calls, each naming the column via a stringstream.
+    // Column order is load-bearing (the solution is read back positionally) and
+    // addVars appends in array order, so it is preserved exactly.
     {
-        e[i] = model.addVar(0.0, 1.0, costs[i], GRB_BINARY, "e_"+itos(i));
-        if (initial_sol_e.count(i))
-        {
-            e[i].set(GRB_DoubleAttr_Start, 1.0);
-        } else {
-            e[i].set(GRB_DoubleAttr_Start, 0.0);
-        }
+        vector<char>   vtypes (index, GRB_BINARY);
+        vector<double> vlb (index, 0.0), vub (index, 1.0);
+        e = model.addVars(vlb.data(), vub.data(), costs.data(), vtypes.data(), nullptr, index);
+        vector<double> estart (index, 0.0);
+        for (int i : initial_sol_e)
+            estart[i] = 1.0;
+        model.set(GRB_DoubleAttr_Start, e, estart.data(), index);
     }
+    x = new GRBVar[K];
     {
         ostringstream msg;
         msg << "Miss penalty: " << miss_penalty << " (D=" << D << ", n=" << epoch_n << ")";
@@ -206,20 +258,32 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
 
     cout << "Initial cost: " << initial_cost << " Previous cost: " << prev_cost << endl;
 
+    // Every constraint is a unit sum, and `expr += e[j]` allocated a GRBLinExpr
+    // temporary per term (~7.0 M/epoch); addTerms appends them in bulk.
+    vector<double> ones;
+    {
+        size_t maxlen = 0;
+        for (auto & p : trip_list) maxlen = max(maxlen, p.second.size());
+        for (auto & v : rids_to_trips) maxlen = max(maxlen, v.size());
+        ones.assign(maxlen, 1.0);
+    }
+    vector<GRBVar> gather;   // reused scratch for the non-contiguous sums
+    gather.reserve(ones.size());
+
     // Constraint One.
-    int count = 0;
+    size_t count = 0;
     for (auto &id_trip_pair : trip_list)
     {
         int vid = id_trip_pair.first->id;
-        vector<Trip> trips = id_trip_pair.second;
+        size_t const n_trips = id_trip_pair.second.size();  // was a full vector copy
         string name = "c1-" + to_string(vid);
 
+        // One vehicle's trips are contiguous columns, so no gather is needed.
         GRBLinExpr expr = 0;
-        for (int j = count; j < count + trips.size(); j++)
-            expr += e[j];
+        expr.addTerms(ones.data(), e + count, (int) n_trips);
         
         model.addConstr(expr == 1, name);
-        count += trips.size();
+        count += n_trips;
     }
     
     // Constraint Two (request should be served via an option or penalty term set to 1).
@@ -233,8 +297,9 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
         
         GRBLinExpr expr = 0;
         double start_sum = 0;
-        for (int j : rids_to_trips[id]){
-            expr += e[j];
+        gather.clear();
+        for (int j : trips_of(id)){
+            gather.push_back(e[j]);
             // if (j > index)
             //     cout << "j: " << j << " index: " << index << endl;
             // start_sum += e[j].get(GRB_DoubleAttr_Start);
@@ -246,30 +311,27 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
         //     }
         // }
         if (request->assigned) {
+            if (ones.size() < gather.size()) ones.assign(gather.size(), 1.0);
+            expr.addTerms(ones.data(), gather.data(), (int) gather.size());
             model.addConstr(expr == 1, name);
             // rids_to_trips[id].insert(index);
         } else {
             set<int> considered_bus_trips;
             for (int leg_id : reqs_to_legs[id]) 
             {
-                Request* leg_request;
-                for (Request* req : requests)
-                {
-                    if (req->id == leg_id) {
-                        leg_request = req;
-                        break;
-                    }
-                }
+                Request* leg_request = req_by_id.at(leg_id);
                 // if (leg_request->leg_type == 0)
                 //     continue;
                 int bus_trip_id = leg_request->bus_trip_id;
                 if (considered_bus_trips.count(bus_trip_id)==0)
                 {
-                    for (int j : rids_to_trips[leg_id])
-                        expr += e[j];
+                    for (int j : trips_of(leg_id))
+                        gather.push_back(e[j]);
                 }
                 considered_bus_trips.insert(bus_trip_id);
             }
+            if (ones.size() < gather.size()) ones.assign(gather.size(), 1.0);
+            expr.addTerms(ones.data(), gather.data(), (int) gather.size());
             model.addConstr(expr + x[k] == 1, name);
             k ++;
         }
@@ -288,14 +350,7 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
 
         int id = request->id;
         for (int leg_id : reqs_to_legs[id]) {
-            Request* first_leg_request;
-            for (Request* req : requests)
-            {
-                if (req->id == leg_id) {
-                    first_leg_request = req;
-                    break;
-                }
-            }
+            Request* first_leg_request = req_by_id.at(leg_id);
             // only consider first leg requests
             if (first_leg_request->leg_type == 1)
                 continue;
@@ -315,9 +370,9 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
                 continue;
 
             GRBLinExpr expr = 0;
-            for (int j : rids_to_trips[leg_id])
+            for (int j : trips_of(leg_id))
                 expr += e[j];
-            for (int j : rids_to_trips[last_leg_request_id])
+            for (int j : trips_of(last_leg_request_id))
                 expr -= e[j];
             string name = "c3-" + to_string(bus_trip_id);
             model.addConstr(expr == 0, name);
@@ -356,14 +411,19 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
     } else {
         model.set(GRB_IntParam_MIPFocus, 1);
     }
-    model.set(GRB_IntParam_Presolve, 1);
+    // Was hardcoded to 1; presolve measured 57% of solve time.  Default 1 is unchanged.
+    model.set(GRB_IntParam_Presolve, GRB_PRESOLVE);
     // model.set(GRB_DoubleParam_Heuristics, 0.5);
     // model.set(GRB_IntParam_SolutionLimit, 1);
     model.set(GRB_DoubleParam_MIPGap, 2e-2);
     // model.set(GRB_DoubleParam_NoRelHeurTime, 10.0);
     // model.set(GRB_IntParam_Method, 1);
     model.set(GRB_DoubleParam_TimeLimit, time_limit);
+    last_model_build_seconds = _toc();
+    _tic();
     model.optimize();
+    last_solve_seconds = _toc();
+    _tic();
 
     // Optimize
     // double remaining_time = time_limit - model.get(GRB_DoubleAttr_Runtime);
@@ -387,8 +447,8 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
         icount += (d > 0.5);
     }
     cout << "Made " << icount << " assignments." << endl;
-    // Write statistics.
-    if (linear_assignment.size())
+    // Write statistics.  Destination is explicit; see the header.
+    if (primary_stats)
     {
         ofstream ilpfile(RESULTS_DIRECTORY + "/ilp.csv", std::ios_base::app);
         
@@ -436,6 +496,7 @@ map<Vehicle*,Trip> ilp_assignment_gurobi(
     delete[] e;
     delete[] x;
     
+    last_extract_seconds = _toc();
     return assigned_trips;
     
     } catch (GRBException ex) {

@@ -47,7 +47,8 @@ assignment_result trip_assignment(
 {
     if (LINEAR_ASSIGNMENT)
         return ilp_full_linear::assignment(vehicles, requests, time, network, threads);
-    return ilp_full::assignment(vehicles, requests, prev_trip_list, time, network, threads);
+    // prev_trip_list is our own by-value parameter and is dead after this call.
+    return ilp_full::assignment(vehicles, requests, std::move(prev_trip_list), time, network, threads);
 }
 
 Trip previoustrip(Vehicle* v, Network const & n, int time)

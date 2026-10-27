@@ -27,6 +27,66 @@ The software is tested on Linux with the G++ compiler.
 - [Gurobi](https://www.gurobi.com/) optimizer (set the `GUROBI_HOME` environment variable to your Gurobi installation directory)
 - [Boost](https://www.boost.org/) C++ libraries
 
+## Input Data
+
+Datasets for the five included cities ship as archives in `data/`, one per city:
+
+| archive | nodes | edges | requests | transit legs | `times.npy` once generated |
+|---|---|---|---|---|---|
+| `data/atlanta_inputs.zip` | 54,652 | 129,731 | 15,332 | 62,531 | 6.0 GB |
+| `data/boston_inputs.zip` | 62,832 | 152,834 | 30,383 | 62,942 | 7.9 GB |
+| `data/chicago_inputs.zip` | 44,095 | 120,275 | 28,518 | 392,291 | 3.9 GB |
+| `data/houston_inputs.zip` | 70,775 | 176,946 | 18,369 | 21,665 | 10.0 GB |
+| `data/la_inputs.zip` | 76,531 | 212,432 | 47,006 | 100,017 | 11.7 GB |
+
+### 1. Extract
+
+Unpack an archive into `data/`, which puts the city directory where `DATAROOT`
+will point:
+
+```bash
+unzip data/chicago_inputs.zip -d data/      # -> data/chicago/...
+```
+
+Each archive holds everything the simulator reads except the travel-time
+matrix:
+
+```
+<city>/map/edges.csv              directed road graph, "origin,dest,travel_time" (1-based node ids)
+<city>/requests/requests.csv      direct (non-transit) requests
+<city>/requests/leg_requests.csv  first/last-mile transit legs, read when ALLOW_MULTI_MODAL is true
+<city>/vehicles/vehicles.csv      vehicle fleet; VEHICLE_LIMIT caps how many are loaded
+<city>/map/nodes.csv              node coordinates; reference only, never read by the simulator
+```
+
+### 2. Generate `times.npy`
+
+The simulator also needs `<city>/map/times.npy`, a dense uint16 all-pairs
+travel-time matrix. It is derived data — the all-pairs shortest paths over
+`map/edges.csv` — and far larger than its source, 3.9 GB from a 1.7 MB edge
+list for Chicago, so it is generated locally instead of distributed:
+
+```bash
+python3 data/gen_times_npy.py data/chicago              # ~7 min single-threaded
+python3 data/gen_times_npy.py data/chicago --jobs 8     # ~1 min
+```
+
+Requires `numpy` and `scipy`. The script writes through a memory-mapped output,
+so the matrix never has to fit in RAM, and it reports any unreachable node
+pairs or distances that overflow uint16 rather than discarding them silently.
+
+To check a matrix against a known-good copy — every sampled row, cell by cell:
+
+```bash
+python3 data/gen_times_npy.py data/chicago --verify-only \
+  --verify /path/to/known-good/times.npy --samples 25
+```
+
+Two things to know before running: the simulator aborts while constructing
+`Network` if `times.npy` is absent, and loading the matrix costs about twice
+the file size in RAM, since `network.cpp` expands each uint16 entry to `int`
+(7.8 GB resident for Chicago, 23 GB for LA).
+
 ## Compiling
 
 ```bash

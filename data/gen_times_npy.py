@@ -99,7 +99,7 @@ def allocate(out_path, n):
     """Write the .npy header, then size the file so workers can fill it in
     place -- the 3.9 GB is never held in memory."""
     with open(out_path, "wb") as f:
-        np.lib.format.write_array_header_2_0(
+        np.lib.format.write_array_header_1_0(
             f, {"descr": "<u2", "fortran_order": False, "shape": (n, n)})
         header_len = f.tell()
     with open(out_path, "r+b") as f:
